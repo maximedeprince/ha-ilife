@@ -1,0 +1,13 @@
+{
+  "domain": "ilife",
+  "name": "ILIFE Vacuum",
+  "codeowners": ["@maximedeprince"],
+  "config_flow": true,
+  "dependencies": ["http", "frontend"],
+  "documentation": "https://github.com/maximedeprince/ha-ilife",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/maximedeprince/ha-ilife/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

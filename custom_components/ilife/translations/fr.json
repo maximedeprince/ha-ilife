@@ -1,0 +1,143 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Connectez-vous avec votre compte ILIFE (ILIFEHOME). Choisissez la région où votre compte a été créé.",
+        "data": {
+          "email": "E-mail",
+          "password": "Mot de passe",
+          "region": "Région"
+        }
+      },
+      "reauth_confirm": {
+        "description": "Ressaisissez le mot de passe pour {email}.",
+        "data": {
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Identifiants invalides",
+      "cannot_connect": "Échec de connexion"
+    },
+    "abort": {
+      "already_configured": "Ce compte est déjà configuré",
+      "reauth_successful": "Ré-authentification réussie"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Batterie"
+      },
+      "main_brush": {
+        "name": "Brosse principale"
+      },
+      "side_brush": {
+        "name": "Brosse latérale"
+      },
+      "filter": {
+        "name": "Filtre"
+      },
+      "last_area": {
+        "name": "Dernière surface"
+      },
+      "last_duration": {
+        "name": "Dernière durée"
+      },
+      "last_clean": {
+        "name": "Dernier nettoyage"
+      },
+      "history": {
+        "name": "Historique"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "En ligne"
+      }
+    },
+    "select": {
+      "water_level": {
+        "name": "Contrôle de l'eau"
+      },
+      "cleaning_mode": {
+        "name": "Mode de nettoyage"
+      }
+    },
+    "switch": {
+      "carpet": {
+        "name": "Reconnaissance des tapis"
+      },
+      "schedule_1_enable": {
+        "name": "Programmation Lundi"
+      },
+      "schedule_2_enable": {
+        "name": "Programmation Mardi"
+      },
+      "schedule_3_enable": {
+        "name": "Programmation Mercredi"
+      },
+      "schedule_4_enable": {
+        "name": "Programmation Jeudi"
+      },
+      "schedule_5_enable": {
+        "name": "Programmation Vendredi"
+      },
+      "schedule_6_enable": {
+        "name": "Programmation Samedi"
+      },
+      "schedule_7_enable": {
+        "name": "Programmation Dimanche"
+      }
+    },
+    "time": {
+      "schedule_1_time": {
+        "name": "Heure Lundi"
+      },
+      "schedule_2_time": {
+        "name": "Heure Mardi"
+      },
+      "schedule_3_time": {
+        "name": "Heure Mercredi"
+      },
+      "schedule_4_time": {
+        "name": "Heure Jeudi"
+      },
+      "schedule_5_time": {
+        "name": "Heure Vendredi"
+      },
+      "schedule_6_time": {
+        "name": "Heure Samedi"
+      },
+      "schedule_7_time": {
+        "name": "Heure Dimanche"
+      }
+    },
+    "camera": {
+      "map": {
+        "name": "Carte"
+      }
+    },
+    "button": {
+      "forward": {
+        "name": "Avancer"
+      },
+      "backward": {
+        "name": "Reculer"
+      },
+      "left": {
+        "name": "Gauche"
+      },
+      "right": {
+        "name": "Droite"
+      },
+      "rc_pause": {
+        "name": "Stop télécommande"
+      },
+      "dust_collection": {
+        "name": "Vider le bac"
+      }
+    }
+  }
+}

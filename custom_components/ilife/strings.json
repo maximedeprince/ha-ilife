@@ -1,0 +1,143 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Sign in with your ILIFE (ILIFEHOME) account. Pick the region your account was created in.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "region": "Region"
+        }
+      },
+      "reauth_confirm": {
+        "description": "Re-enter the password for {email}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid credentials",
+      "cannot_connect": "Failed to connect"
+    },
+    "abort": {
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      },
+      "main_brush": {
+        "name": "Main brush"
+      },
+      "side_brush": {
+        "name": "Side brush"
+      },
+      "filter": {
+        "name": "Filter"
+      },
+      "last_area": {
+        "name": "Last area"
+      },
+      "last_duration": {
+        "name": "Last duration"
+      },
+      "last_clean": {
+        "name": "Last cleaning"
+      },
+      "history": {
+        "name": "History"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "Online"
+      }
+    },
+    "select": {
+      "water_level": {
+        "name": "Water level"
+      },
+      "cleaning_mode": {
+        "name": "Cleaning mode"
+      }
+    },
+    "switch": {
+      "carpet": {
+        "name": "Carpet recognition"
+      },
+      "schedule_1_enable": {
+        "name": "Monday schedule"
+      },
+      "schedule_2_enable": {
+        "name": "Tuesday schedule"
+      },
+      "schedule_3_enable": {
+        "name": "Wednesday schedule"
+      },
+      "schedule_4_enable": {
+        "name": "Thursday schedule"
+      },
+      "schedule_5_enable": {
+        "name": "Friday schedule"
+      },
+      "schedule_6_enable": {
+        "name": "Saturday schedule"
+      },
+      "schedule_7_enable": {
+        "name": "Sunday schedule"
+      }
+    },
+    "time": {
+      "schedule_1_time": {
+        "name": "Monday time"
+      },
+      "schedule_2_time": {
+        "name": "Tuesday time"
+      },
+      "schedule_3_time": {
+        "name": "Wednesday time"
+      },
+      "schedule_4_time": {
+        "name": "Thursday time"
+      },
+      "schedule_5_time": {
+        "name": "Friday time"
+      },
+      "schedule_6_time": {
+        "name": "Saturday time"
+      },
+      "schedule_7_time": {
+        "name": "Sunday time"
+      }
+    },
+    "camera": {
+      "map": {
+        "name": "Map"
+      }
+    },
+    "button": {
+      "forward": {
+        "name": "Forward"
+      },
+      "backward": {
+        "name": "Backward"
+      },
+      "left": {
+        "name": "Left"
+      },
+      "right": {
+        "name": "Right"
+      },
+      "rc_pause": {
+        "name": "Remote stop"
+      },
+      "dust_collection": {
+        "name": "Empty bin"
+      }
+    }
+  }
+}
