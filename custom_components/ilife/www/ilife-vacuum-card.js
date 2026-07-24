@@ -13,7 +13,7 @@ const T = {
     start: "Start", pause: "Pause", resume: "Resume", stop: "Stop", dock: "Dock", locate: "Locate",
     overview: "Overview", settings: "Settings", suction: "Suction", water: "Water", mode: "Mode",
     carpet: "Carpet recognition", manual: "Manual control", schedules: "Schedules", history: "History",
-    empty_bin: "Empty bin", live: "Live", offline: "Offline", battery: "battery",
+    empty_bin: "Empty bin", live: "Live", offline: "Offline", battery: "battery", last_run: "Last cleaning",
     cycles: "Cycles", area: "Area", total_time: "Total time", brush: "Brush", filter: "Filter",
     m2_cleaned: "m² cleaned", minutes: "minutes", no_history: "No recent cleanings.",
     not_found: "No ILIFE vacuum entity found.", today: "Today", yesterday: "Yesterday",
@@ -27,7 +27,7 @@ const T = {
     start: "Démarrer", pause: "Pause", resume: "Reprendre", stop: "Stop", dock: "Base", locate: "Localiser",
     overview: "Aperçu", settings: "Réglages", suction: "Aspiration", water: "Eau", mode: "Mode",
     carpet: "Reconnaissance des tapis", manual: "Pilotage manuel", schedules: "Programmations", history: "Historique",
-    empty_bin: "Vider le bac", live: "En direct", offline: "Hors ligne", battery: "batterie",
+    empty_bin: "Vider le bac", live: "En direct", offline: "Hors ligne", battery: "batterie", last_run: "Dernier passage",
     cycles: "Cycles", area: "Surface", total_time: "Temps cumulé", brush: "Brosse", filter: "Filtre",
     m2_cleaned: "m² nettoyés", minutes: "minutes", no_history: "Aucun nettoyage récent.",
     not_found: "Aucune entité aspirateur ILIFE trouvée.", today: "Aujourd'hui", yesterday: "Hier",
@@ -319,6 +319,7 @@ class IlifeVacuumCard extends HTMLElement {
           ${e.map ? `<div class="vc-map">
             <div class="glow"></div><div class="grid"></div>
             <img class="vc-mapimg" data-el="map" alt="map">
+            <canvas class="vc-mapimg" data-el="heromap" hidden></canvas>
             <div class="vig"></div>
             <span class="vc-badge"><span class="bd"></span><span data-el="badgetxt">${t.live}</span></span>
             <div class="vc-scrim vc-num" data-el="scrim" hidden></div>
@@ -502,6 +503,22 @@ class IlifeVacuumCard extends HTMLElement {
 
     const cleans = (e.history && hass.states[e.history]?.attributes.cleans) || [];
     const cycles = cleans.length;
+
+    // Hero map: live camera while cleaning, otherwise the last completed clean's full map
+    const img = q("map"), hero = q("heromap");
+    if (img && hero) {
+      let usedHero = false;
+      if (vs.state !== "cleaning") {
+        const last = cleans.find((c) => c.map);
+        const dec = last && decodeCleanMap(last.map);
+        if (dec && dec.cells.length) {
+          drawMapCells(hero, dec.cells, 360, 260);
+          hero.hidden = false; img.hidden = true; usedHero = true;
+          if (q("badgetxt") && online) q("badgetxt").textContent = t.last_run;
+        }
+      }
+      if (!usedHero) { hero.hidden = true; img.hidden = false; }
+    }
     const totArea = cleans.reduce((s, c) => s + (Number(c.area) || 0), 0);
     const totMin = cleans.reduce((s, c) => s + (Number(c.duration) || 0), 0);
     const fmtDur = (m) => m >= 60 ? Math.floor(m / 60) + "h" + (m % 60 ? String(m % 60).padStart(2, "0") : "") : m + "min";
