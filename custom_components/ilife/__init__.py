@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-import time
+import time as _time  # aliased: a sibling submodule is named time.py (TimeEntity platform)
 from datetime import timedelta
 from typing import Any
 
@@ -61,8 +61,8 @@ class ILifeCoordinator(DataUpdateCoordinator):
             self.online = await self.hass.async_add_executor_job(self.api.is_online)
         except Exception:  # noqa: BLE001
             _LOGGER.debug("ILIFE online status unavailable", exc_info=True)
-        if time.monotonic() >= self._hist_next:
-            self._hist_next = time.monotonic() + 300
+        if _time.monotonic() >= self._hist_next:
+            self._hist_next = _time.monotonic() + 300
             try:
                 self.history = await self.hass.async_add_executor_job(self.api.clean_history, 20)
                 await self.hass.async_add_executor_job(self._archive_maps)
@@ -156,10 +156,9 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
     if hass.state is CoreState.running:
         await _async_register_card_resource(hass)
     else:
-        hass.bus.async_listen_once(
-            EVENT_HOMEASSISTANT_STARTED,
-            lambda _e: hass.async_create_task(_async_register_card_resource(hass)),
-        )
+        async def _on_started(_event):
+            await _async_register_card_resource(hass)
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
 
 
 async def _async_register_card_resource(hass: HomeAssistant) -> None:
@@ -179,8 +178,9 @@ async def _async_register_card_resource(hass: HomeAssistant) -> None:
     if resources is None:
         return
     if not getattr(resources, "loaded", False):
-        async_call_later(hass, 5, lambda _now: hass.async_create_task(
-            _async_register_card_resource(hass)))
+        async def _retry(_now):
+            await _async_register_card_resource(hass)
+        async_call_later(hass, 5, _retry)
         return
 
     from homeassistant.loader import async_get_integration

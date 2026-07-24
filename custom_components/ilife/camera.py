@@ -31,7 +31,7 @@ class ILifeMapCamera(CoordinatorEntity, Camera):
 
     @property
     def available(self) -> bool:
-        return self.coordinator.last_update_success and self.coordinator.online is not False
+        return self.coordinator.last_update_success
 
     def _key(self, data):
         rtm = (data or {}).get("RealTimeMap") or {}

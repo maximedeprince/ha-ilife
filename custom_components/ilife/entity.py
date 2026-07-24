@@ -27,7 +27,9 @@ class ILifeEntity(CoordinatorEntity):
         self.api = coordinator.api
         self._attr_device_info = device_info(self.api)
 
-    @property
-    def available(self) -> bool:
-        # available unless the coordinator failed OR the vacuum is explicitly offline
-        return super().available and self.coordinator.online is not False
+    # NOTE: availability is intentionally NOT gated on the cloud "online" flag.
+    # ILIFE vacuums often report offline while docked (Wi-Fi sleep) even though the
+    # cloud still returns valid cached state, so gating would make everything look
+    # unavailable most of the time. Online status is exposed via the connectivity
+    # binary sensor and the card instead. Availability = coordinator success only
+    # (inherited from CoordinatorEntity).
