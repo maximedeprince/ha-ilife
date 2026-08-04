@@ -25,6 +25,11 @@
       "reauth_successful": "Re-authentication was successful"
     }
   },
+  "exceptions": {
+    "device_offline": {
+      "message": "The vacuum is asleep at its dock and can't be reached from the cloud right now. It wakes automatically for scheduled cleans; on-demand commands only work while it is awake."
+    }
+  },
   "entity": {
     "sensor": {
       "battery": {
@@ -137,6 +142,15 @@
       },
       "dust_collection": {
         "name": "Empty bin"
+      },
+      "reset_main_brush": {
+        "name": "Reset main brush"
+      },
+      "reset_side_brush": {
+        "name": "Reset side brush"
+      },
+      "reset_filter": {
+        "name": "Reset filter"
       }
     }
   }

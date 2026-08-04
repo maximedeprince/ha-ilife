@@ -25,6 +25,11 @@
       "reauth_successful": "Ré-authentification réussie"
     }
   },
+  "exceptions": {
+    "device_offline": {
+      "message": "L'aspirateur est en veille sur sa base et injoignable côté cloud pour le moment. Il se réveille automatiquement pour les nettoyages programmés ; les commandes à la demande ne fonctionnent que lorsqu'il est réveillé."
+    }
+  },
   "entity": {
     "sensor": {
       "battery": {
@@ -137,6 +142,15 @@
       },
       "dust_collection": {
         "name": "Vider le bac"
+      },
+      "reset_main_brush": {
+        "name": "Réinitialiser brosse principale"
+      },
+      "reset_side_brush": {
+        "name": "Réinitialiser brosse latérale"
+      },
+      "reset_filter": {
+        "name": "Réinitialiser filtre"
       }
     }
   }

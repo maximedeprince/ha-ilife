@@ -6,7 +6,9 @@ from homeassistant.components.vacuum import (
     VacuumActivity,
     VacuumEntityFeature,
 )
+from homeassistant.exceptions import HomeAssistantError
 
+from .api import ILifeError, ILifeOfflineError
 from .const import (
     CLEANING_MODES,
     DOCKED_MODES,
@@ -60,7 +62,14 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         return suction_label((self.coordinator.data or {}).get("VacWateState"))
 
     async def _cmd(self, fn, *args):
-        await self.hass.async_add_executor_job(fn, *args)
+        try:
+            await self.hass.async_add_executor_job(fn, *args)
+        except ILifeOfflineError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="device_offline"
+            ) from err
+        except ILifeError as err:
+            raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_request_refresh()
 
     async def async_start(self):

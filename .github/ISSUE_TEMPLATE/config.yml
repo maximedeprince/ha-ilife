@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / general help
+    url: https://community.home-assistant.io/
+    about: For usage questions, please ask on the Home Assistant community forum.

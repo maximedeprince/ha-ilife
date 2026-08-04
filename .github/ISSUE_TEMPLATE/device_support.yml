@@ -1,0 +1,88 @@
+name: Device support / Bug report
+description: Report a problem, or request support for a specific ILIFE vacuum model
+title: "[MODEL] - short description"
+labels: ["device-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the integration! 🙌
+        The **debug logs** below are what make it possible to add support for new models — please include them.
+
+  - type: input
+    id: model
+    attributes:
+      label: Vacuum model
+      description: The exact model, as printed on the robot or shown in the ILIFE Home app.
+      placeholder: e.g. ILIFE V3x, A10, W90…
+    validations:
+      required: true
+
+  - type: dropdown
+    id: works_in_app
+    attributes:
+      label: Does the vacuum work in the official ILIFE Home app?
+      options:
+        - "Yes"
+        - "No"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: region
+    attributes:
+      label: Account region
+      placeholder: e.g. EU, US, AP, CN
+    validations:
+      required: false
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: e.g. 2026.7.0
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      placeholder: e.g. 0.3.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happens
+    attributes:
+      label: What happens / what did you expect?
+      description: A clear description of the problem, or which model you'd like supported.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug logs (crucial for adding support!)
+      description: |
+        1. Add this to `configuration.yaml` and restart Home Assistant:
+        ```yaml
+        logger:
+          default: info
+          logs:
+            custom_components.ilife: debug
+        ```
+        2. Use the vacuum (start, stop, change suction…).
+        3. Copy the relevant `custom_components.ilife` lines from **Settings → System → Logs**.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Screenshots / additional context
+      description: Screenshots from Home Assistant or the ILIFE app, and anything else useful.
+    validations:
+      required: false

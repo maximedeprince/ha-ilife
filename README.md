@@ -1,12 +1,22 @@
 # ILIFE Vacuum for Home Assistant
 
+[![hacs_badge](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub release](https://img.shields.io/github/v/release/maximedeprince/ha-ilife)](https://github.com/maximedeprince/ha-ilife/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Custom Home Assistant integration for **ILIFE** robot vacuums that use the
 **ILIFEHOME** app (Alibaba IoT / 3irobotix cloud). It talks to the cloud API
 directly — no Tuya, no MQTT broker to set up — and ships a premium all‑in‑one
 Lovelace card.
 
+<p align="center">
+  <img src="docs/screenshot-1.png" width="300" alt="Card — status, map and controls">
+  &nbsp;&nbsp;
+  <img src="docs/screenshot-2.png" width="300" alt="Card — schedules and clickable history">
+</p>
+
 > Tested with the **ILIFE V3x** on the **ILIFEHOME** app, **EU** region.
-> Other 3irobotix‑based ILIFE models may work but are not verified.
+> Other 3irobotix‑based ILIFE models likely work — **testers welcome** (see below).
 
 ## Features
 
@@ -17,30 +27,48 @@ Lovelace card.
 - 🔋 Battery, brushes and filter wear, last clean, connectivity (online/offline)
 - 🗺️ Live map camera + **clickable cleaning history with the day's map**
 - 🖼️ Each cleaning is archived as a tiny PNG in `www/ilife_maps/`
-- 🧩 Bundled **ILIFE Vacuum Card** (auto‑registered), English + French
+- 🧩 Bundled **ILIFE Vacuum Card** — added from the UI, **responsive** (2 columns on desktop, 1 on mobile), English + French
 - 👥 Multiple vacuums and multiple accounts supported
 
-## Installation (HACS – custom repository)
+## Installation (HACS)
 
-1. HACS → ⋮ → **Custom repositories** → add `https://github.com/maximedeprince/ha-ilife` (type **Integration**).
-2. Install **ILIFE Vacuum**, then restart Home Assistant.
+1. HACS → search **ILIFE Vacuum** → **Download** (or add this repo as a custom repository, type *Integration*).
+2. Restart Home Assistant.
 3. **Settings → Devices & Services → Add Integration → ILIFE Vacuum**.
 4. Enter your ILIFEHOME **email**, **password** and **region**.
 
-The Lovelace card is registered automatically (storage‑mode dashboards). If you
-use **YAML‑mode** dashboards, add the resource manually:
+## The card — add it from the UI
+
+Edit a dashboard → **Add card** → search **ILIFE Vacuum Card** → pick your vacuum
+in the visual editor. Everything else (map, sensors, schedules…) is detected
+automatically. No YAML needed.
+
+The card is registered automatically for storage‑mode dashboards. For
+**YAML‑mode** dashboards, add the resource manually:
 
 ```yaml
-# configuration.yaml (lovelace resources) or the dashboard's resources:
 - url: /ilife_cards/ilife-vacuum-card.js
   type: module
 ```
 
-## The card
+## 🙏 Help wanted — testers for other ILIFE models
 
-Add a card → **ILIFE Vacuum Card**, pick your vacuum entity — everything else is
-detected automatically. It shows the live map, controls, schedules and a
-clickable history (tap a cleaning to open its full map).
+The code is written to be generic, so other 3irobotix‑based ILIFE vacuums have a
+good chance of working. If you own a **different model**, please try it and
+[open an issue](https://github.com/maximedeprince/ha-ilife/issues/new/choose)
+with your model and **debug logs** — that's what lets me add support.
+
+## Troubleshooting — debug logs
+
+Add this to `configuration.yaml`, restart, reproduce the issue, then copy the
+`custom_components.ilife` lines from **Settings → System → Logs**:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.ilife: debug
+```
 
 ## Notes
 

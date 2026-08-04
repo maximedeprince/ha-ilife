@@ -15,9 +15,10 @@ const T = {
     carpet: "Carpet recognition", manual: "Manual control", schedules: "Schedules", history: "History",
     empty_bin: "Empty bin", live: "Live", offline: "Offline", battery: "battery", last_run: "Last cleaning",
     cycles: "Cycles", area: "Area", total_time: "Total time", brush: "Brush", filter: "Filter",
+    side_brush: "Side brush", reset: "Reset", cancel: "Cancel", reset_confirm: "Reset {part} to 100%?",
     m2_cleaned: "m² cleaned", minutes: "minutes", no_history: "No recent cleanings.",
     not_found: "No ILIFE vacuum entity found.", today: "Today", yesterday: "Yesterday",
-    active: "active", session: "session", sessions: "sessions",
+    active: "active", session: "session", sessions: "sessions", sleeping: "standby",
     days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
     st: { cleaning: "Cleaning", docked: "Docked", returning: "Returning to dock", paused: "Paused",
           idle: "Idle", error: "Error", unavailable: "Unavailable" },
@@ -29,9 +30,10 @@ const T = {
     carpet: "Reconnaissance des tapis", manual: "Pilotage manuel", schedules: "Programmations", history: "Historique",
     empty_bin: "Vider le bac", live: "En direct", offline: "Hors ligne", battery: "batterie", last_run: "Dernier passage",
     cycles: "Cycles", area: "Surface", total_time: "Temps cumulé", brush: "Brosse", filter: "Filtre",
+    side_brush: "Brosse latérale", reset: "Réinitialiser", cancel: "Annuler", reset_confirm: "Réinitialiser {part} à 100% ?",
     m2_cleaned: "m² nettoyés", minutes: "minutes", no_history: "Aucun nettoyage récent.",
     not_found: "Aucune entité aspirateur ILIFE trouvée.", today: "Aujourd'hui", yesterday: "Hier",
-    active: "active", session: "session", sessions: "sessions",
+    active: "active", session: "session", sessions: "sessions", sleeping: "en veille",
     days: ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"],
     st: { cleaning: "Nettoyage en cours", docked: "À la base", returning: "Retour à la base", paused: "En pause",
           idle: "Inactif", error: "Erreur", unavailable: "Indisponible" },
@@ -121,7 +123,7 @@ class IlifeVacuumCard extends HTMLElement {
     const tk = (id) => reg[id]?.translation_key || "";
     const dom = (id) => id.split(".")[0];
     const e = { vacuum: cfgEnt || null, map: null, water: null, mode: null, carpet: null,
-      battery: null, history: null, online: null, brush: null, filter: null, buttons: {}, schedules: {} };
+      battery: null, history: null, online: null, brush: null, side: null, filter: null, buttons: {}, schedules: {} };
     for (const id of ids) {
       const d = dom(id), k = tk(id);
       if (d === "vacuum") { if (!e.vacuum) e.vacuum = id; }
@@ -134,13 +136,15 @@ class IlifeVacuumCard extends HTMLElement {
       } else if (d === "time") {
         const m = k.match(/^schedule_(\d+)_time$/); if (m) (e.schedules[+m[1]] = e.schedules[+m[1]] || {}).time = id;
       } else if (d === "button") {
-        const map = { forward: "forward", backward: "backward", left: "left", right: "right", rc_pause: "rcstop", dust_collection: "dust" };
+        const map = { forward: "forward", backward: "backward", left: "left", right: "right", rc_pause: "rcstop", dust_collection: "dust",
+          reset_main_brush: "resetmain", reset_side_brush: "resetside", reset_filter: "resetfilter" };
         if (map[k]) e.buttons[map[k]] = id;
       } else if (d === "sensor") {
         const dc = hass.states[id]?.attributes.device_class;
         if (dc === "battery") e.battery = id;
         else if (k === "history") e.history = id;
         else if (k === "main_brush") e.brush = id;
+        else if (k === "side_brush") e.side = id;
         else if (k === "filter") e.filter = id;
       }
     }
@@ -179,13 +183,78 @@ class IlifeVacuumCard extends HTMLElement {
     this.innerHTML = `
       <ha-card class="ilife-card">
         <style>
-          ha-card.ilife-card{max-width:560px;margin:0 auto;display:block;}
+          ha-card.ilife-card{margin:0 auto;display:block;}
           .vc{--e1:0 1px 2px rgba(0,0,0,.06),0 1px 3px rgba(0,0,0,.10);
               --hover:color-mix(in srgb, var(--primary-text-color) 6%, var(--secondary-background-color));
               padding:16px;color:var(--primary-text-color);
               font-family:var(--ha-font-family,var(--paper-font-body1_-_font-family),system-ui,sans-serif);}
           @media(min-width:480px){.vc{padding:20px;}}
           .vc *{box-sizing:border-box;}
+          /* Responsive: single column on narrow, two columns when the card is wide
+             (PC). The .wide class is toggled by a ResizeObserver on the card's own
+             width, so it adapts to its placement, not the viewport. */
+          /* Masonry-style auto-balancing: each section is an unbreakable block;
+             the browser spreads them across 2 (>=560px) or 3 (>=900px) columns to
+             even out the heights. Single column on narrow. */
+          /* Wide/panel = a "bento" of rounded tiles on the auto-balancing grid. */
+          .vc.wide .vc-cols{column-count:var(--cols,2);column-gap:18px;}
+          .vc.wide .vc-block{
+            background:color-mix(in srgb, var(--primary-text-color) 6%, var(--ha-card-background,var(--card-background-color)));
+            border:1px solid color-mix(in srgb, var(--primary-text-color) 12%, transparent);border-radius:22px;padding:16px 18px;margin-top:18px;
+            box-shadow:0 2px 10px rgba(0,0,0,.12);
+            break-inside:avoid;-webkit-column-break-inside:avoid;}
+          .vc.wide .vc-block>:first-child{margin-top:0;}
+          .vc.wide .vc-block .vc-sec{margin:0 0 12px;}
+          .vc.wide .vc-kpi{background:transparent;border-color:transparent;padding:6px 4px;}
+          .vc.wide .vc-map{margin-top:0;}
+          /* full_height: fill the whole panel (width AND height) as a bento grid.
+             Map = big hero (2x2), the four other tiles fill the right side. */
+          .vc.full{display:flex;flex-direction:column;box-sizing:border-box;height:calc(100dvh - var(--header-height, 56px) - 12px);}
+          .vc.full .vc-cols{column-count:unset;display:grid;
+            grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:16px;
+            flex:1;min-height:0;}
+          .vc.full .vc-block{margin-top:0;min-height:0;overflow:auto;}
+          .vc.full .blk-map{grid-column:1 / 3;grid-row:1 / 3;overflow:hidden;display:flex;flex-direction:column;}
+          .vc.full .blk-map .vc-map{aspect-ratio:auto;flex:1;min-height:0;}
+          .vc.full .blk-stats{grid-column:3;grid-row:1;}
+          .vc.full .blk-settings{grid-column:3;grid-row:2;}
+          .vc.full .blk-sched{grid-column:4;grid-row:1;}
+          .vc.full .blk-history{grid-column:4;grid-row:2;}
+          /* no schedules -> history fills the whole right column instead of leaving a gap */
+          .vc.full .vc-cols:not(:has(.blk-sched)) .blk-history{grid-row:1 / 3;}
+          /* full mode content: scale up + distribute so tiles aren't half-empty */
+          .vc.full .vc-block{padding:22px 26px;display:flex;flex-direction:column;}
+          .vc.full .vc-mlabel{font-size:13px;}
+          .vc.full .vc-sec{margin:0 0 18px;}
+          .vc.full .vc-sec .r{font-size:13px;}
+          .vc.full .blk-stats .vc-kpis{flex:1;grid-template-columns:repeat(2,1fr);grid-auto-rows:1fr;gap:16px;}
+          .vc.full .blk-stats .vc-kpi{display:flex;flex-direction:column;justify-content:center;background:color-mix(in srgb,var(--primary-text-color) 4%,transparent);border:1px solid color-mix(in srgb,var(--primary-text-color) 9%,transparent);border-radius:18px;padding:14px 20px;}
+          .vc.full .blk-stats .vc-kpi:last-child:nth-child(odd){grid-column:1 / -1;}
+          .vc.full .blk-stats .vc-kpi .ic{width:38px;height:38px;margin-bottom:10px;}
+          .vc.full .blk-stats .vc-kpi .ic ha-icon{--mdc-icon-size:22px;}
+          .vc.full .blk-stats .vc-kpi .v{font-size:30px;}
+          .vc.full .blk-stats .vc-kpi .l{font-size:12px;margin-top:6px;}
+          .vc.full .blk-settings{justify-content:space-between;}
+          .vc.full .blk-settings .vc-field{margin:0;}
+          .vc.full .blk-settings .vc-seg{height:46px;}
+          .vc.full .blk-settings .vc-pill{font-size:14px;}
+          .vc.full .blk-settings .vc-lrow{padding:14px 4px;}
+          .vc.full .blk-settings .vc-lrow .lbl{font-size:15px;}
+          .vc.full .blk-settings .vc-fold{padding:14px 4px;}
+          .vc.full .blk-sched .vc-list{display:flex;flex-direction:column;flex:1;justify-content:space-between;}
+          .vc.full .blk-sched .vc-lrow{padding:10px 6px;}
+          .vc.full .blk-sched .vc-sday{font-size:16px;}
+          .vc.full .blk-sched .vc-stime{font-size:15px;padding:8px 12px;}
+          .vc.full .blk-sched .vc-daypill{width:30px;height:30px;font-size:13px;}
+          .vc.full .blk-history .vc-hist{max-height:none;flex:1;}
+          .vc.full .blk-history .vc-hrow{padding:12px 8px;}
+          .vc.full .blk-history .vc-hwhen{font-size:15px;}
+          .vc.full .blk-history .vc-hsub{font-size:13px;}
+          .vc.full .blk-history .vc-harea{font-size:14px;}
+          .vc.full .blk-history .vc-hthumb{width:42px;height:42px;}
+          /* full mode: let the hero map fill its big tile (lift the 70%/78% + 360x260 caps) */
+          .vc.full .blk-map canvas.vc-mapimg{max-width:none;max-height:none;}
+          .vc.full .blk-map img.vc-mapimg{width:auto;height:96%;max-width:96%;}
           .vc [hidden]{display:none!important;}
           .vc-num{font-variant-numeric:tabular-nums;font-feature-settings:'tnum';}
           .vc-mlabel{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--secondary-text-color);}
@@ -255,9 +324,23 @@ class IlifeVacuumCard extends HTMLElement {
           .vc-sbtn:hover{background:var(--hover);color:var(--primary-text-color);transform:translateY(-1px);}
           .vc-sbtn ha-icon{--mdc-icon-size:22px;}
           .vc-sbtn.stop:hover{color:var(--error-color,#db4437);}
-          .vc.offline .vc-cta,.vc.offline .vc-secs,.vc.offline .vc-pad{opacity:.5;pointer-events:none;}
+          /* When "offline" the vacuum is usually just Wi-Fi asleep at the dock —
+             Start/Stop/Dock/Locate must stay clickable (they wake it). Only the
+             live directional pad is disabled. */
           .vc-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;}
-          .vc-kpi{background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:14px;padding:12px;}
+          .vc-kpi{position:relative;background:var(--secondary-background-color);border:1px solid var(--divider-color);border-radius:14px;padding:12px;}
+          .vc-kpi-reset{position:absolute;top:8px;right:8px;z-index:2;width:26px;height:26px;border:none;border-radius:999px;cursor:pointer;
+            background:color-mix(in srgb,var(--primary-text-color) 8%,transparent);color:var(--secondary-text-color);
+            display:flex;align-items:center;justify-content:center;opacity:.55;transition:.15s;}
+          .vc-kpi-reset:hover{opacity:1;background:color-mix(in srgb,var(--primary-color) 16%,transparent);color:var(--primary-color);}
+          .vc-kpi-reset ha-icon{--mdc-icon-size:16px;}
+          .vc-confirm{max-width:min(92vw,380px);text-align:center;}
+          .vc-confirm-msg{font-size:15px;font-weight:500;line-height:1.4;padding:6px 4px 4px;}
+          .vc-confirm-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;}
+          .vc-cbtn{height:44px;border:none;border-radius:12px;cursor:pointer;font-size:14px;font-weight:600;transition:.15s;}
+          .vc-cbtn.cancel{background:var(--secondary-background-color);color:var(--primary-text-color);}
+          .vc-cbtn.ok{background:var(--primary-color);color:var(--text-primary-color,#fff);}
+          .vc-cbtn:active{transform:scale(.97);}
           .vc-kpi .ic{width:28px;height:28px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:color-mix(in srgb,var(--primary-color) 12%,transparent);color:var(--primary-color);margin-bottom:8px;}
           .vc-kpi .ic ha-icon{--mdc-icon-size:17px;}
           .vc-kpi .v{font-size:20px;font-weight:700;line-height:1;}
@@ -316,6 +399,8 @@ class IlifeVacuumCard extends HTMLElement {
             <div class="vc-id"><div class="vc-name" data-el="name"></div><div class="vc-state"><span data-el="state"></span></div></div>
             <div class="vc-batt vc-num" data-el="batt"><ha-icon data-el="batticon" icon="mdi:battery"></ha-icon><span data-el="battval"></span><i class="vc-battbar" data-el="battbar"></i></div>
           </div>
+          <div class="vc-cols">
+          <div class="vc-block blk-map">
           ${e.map ? `<div class="vc-map">
             <div class="glow"></div><div class="grid"></div>
             <img class="vc-mapimg" data-el="map" alt="map">
@@ -330,8 +415,12 @@ class IlifeVacuumCard extends HTMLElement {
             <button class="vc-sbtn" data-act="dock"><ha-icon icon="mdi:home-import-outline"></ha-icon><span>${t.dock}</span></button>
             <button class="vc-sbtn" data-act="locate"><ha-icon icon="mdi:map-marker"></ha-icon><span>${t.locate}</span></button>
           </div>
+          </div>
+          <div class="vc-block blk-stats">
           <div class="vc-sec"><span class="vc-mlabel">${t.overview}</span></div>
           <div class="vc-kpis" data-el="kpis"></div>
+          </div>
+          <div class="vc-block blk-settings">
           <div class="vc-sec"><span class="vc-mlabel">${t.settings}</span></div>
           ${this._seg(t.suction, "fan", (vs.attributes.fan_speed_list) || [])}
           ${this._seg(t.water, "water", (e.water && hass.states[e.water]?.attributes.options) || [])}
@@ -348,10 +437,14 @@ class IlifeVacuumCard extends HTMLElement {
             </div>
             ${e.buttons.dust ? `<button class="vc-dust" data-act="dust"><ha-icon icon="mdi:delete-empty"></ha-icon>${t.empty_bin}</button>` : ""}
           </div>` : ""}
-          ${sched ? `<div class="vc-sec"><span class="vc-mlabel">${t.schedules}</span><span class="r" data-el="schedcount"></span></div>
-            <div class="vc-strip">${strip}</div><div class="vc-list">${sched}</div>` : ""}
+          </div>
+          ${sched ? `<div class="vc-block blk-sched"><div class="vc-sec"><span class="vc-mlabel">${t.schedules}</span><span class="r" data-el="schedcount"></span></div>
+            <div class="vc-strip">${strip}</div><div class="vc-list">${sched}</div></div>` : ""}
+          <div class="vc-block blk-history">
           <div class="vc-sec"><span class="vc-mlabel">${t.history}</span><span class="r" data-el="histcount"></span></div>
           <div class="vc-hist" data-el="hist"></div>
+          </div>
+          </div>
           <div class="vc-modal" data-el="modal" hidden>
             <div class="vc-modal-bg" data-el="modalbg"></div>
             <div class="vc-modal-panel">
@@ -360,11 +453,77 @@ class IlifeVacuumCard extends HTMLElement {
               <div class="vc-modal-stats vc-num" data-el="mstats"></div>
             </div>
           </div>
+          <div class="vc-modal" data-el="confirm" hidden>
+            <div class="vc-modal-bg" data-el="confirmbg"></div>
+            <div class="vc-modal-panel vc-confirm">
+              <div class="vc-confirm-msg" data-el="confirmmsg"></div>
+              <div class="vc-confirm-btns">
+                <button class="vc-cbtn cancel" data-el="confirmno">${t.cancel}</button>
+                <button class="vc-cbtn ok" data-el="confirmyes">${t.reset}</button>
+              </div>
+            </div>
+          </div>
         </div>`;
 
     this._wire();
     this._built = true;
     this._startMapTimer();
+    this._observeWidth();
+  }
+
+  _observeWidth() {
+    const root = this.querySelector('[data-el="root"]');
+    if (!root || typeof ResizeObserver === "undefined") return;
+    if (this._ro) this._ro.disconnect();
+    this._ro = new ResizeObserver((ents) => {
+      const w = ents[0].contentRect.width;
+      // One column per ~360px, capped at the number of sections (6): the card
+      // fills a wide/panel placement, yet stays narrow inside a grid column.
+      const cols = Math.max(1, Math.min(6, Math.round(w / 360)));
+      root.style.setProperty("--cols", cols);
+      root.classList.toggle("wide", cols >= 2);
+      // full-page bento: auto when the card takes ~all the width (single-card /
+      // panel view); off in a normal grid column. `full_height` config overrides.
+      const near = w / (window.innerWidth || w) >= 0.78;
+      const cfg = this._config || {};
+      const wantFull = cfg.full_height !== undefined ? !!cfg.full_height : near;
+      root.classList.toggle("full", wantFull && w >= 900);
+      this._scheduleFit();
+    });
+    this._ro.observe(root);
+    // Refit the hero map whenever its tile changes size (full-page mode grows it).
+    if (this._roMap) this._roMap.disconnect();
+    this._roMap = null;
+    const mbox = this.querySelector(".blk-map .vc-map");
+    if (mbox && typeof ResizeObserver !== "undefined") {
+      this._roMap = new ResizeObserver(() => this._scheduleFit());
+      this._roMap.observe(mbox);
+    }
+  }
+
+  // Coalesce refit calls from both observers into at most one draw per frame.
+  _scheduleFit() {
+    if (this._fitRaf) return;
+    const raf = (typeof requestAnimationFrame === "function") ? requestAnimationFrame : (cb) => cb();
+    this._fitRaf = raf(() => { this._fitRaf = 0; this._fitHero(); });
+  }
+
+  _fitHero() {
+    const hero = this.querySelector('[data-el="heromap"]');
+    if (!hero || hero.hidden || !this._heroCells || !this._heroCells.length) return;
+    const box = hero.parentElement; if (!box) return;               // .vc-map
+    const full = this.querySelector('[data-el="root"]')?.classList.contains("full");
+    let mw = 360, mh = 260, key = "nf";
+    if (full) {
+      const r = box.getBoundingClientRect();
+      if (r.width < 40 || r.height < 40) return;                     // not laid out yet
+      mw = r.width - 28; mh = r.height - 28;
+      key = "f:" + Math.round(r.width) + "x" + Math.round(r.height);
+    }
+    // Skip redundant redraws (esp. resize-driven) when nothing relevant changed.
+    if (key === this._fitKey && this._fitCells === this._heroCells) return;
+    this._fitKey = key; this._fitCells = this._heroCells;
+    drawMapCells(hero, this._heroCells, mw, mh);
   }
 
   _wire() {
@@ -398,6 +557,34 @@ class IlifeVacuumCard extends HTMLElement {
     q("fold")?.addEventListener("click", () => { this._padOpen = !this._padOpen; q("padbox").hidden = !this._padOpen; q("root").classList.toggle("padopen", this._padOpen); });
     q("mclose")?.addEventListener("click", () => this._showHistView(null));
     q("modalbg")?.addEventListener("click", () => this._showHistView(null));
+    q("kpis")?.addEventListener("click", (ev) => {
+      const btn = ev.target.closest(".vc-kpi-reset"); if (!btn) return;
+      const key = btn.dataset.reset, id = e.buttons[key]; if (!id) return;
+      const tt = this._t, labels = { resetmain: tt.brush, resetside: tt.side_brush, resetfilter: tt.filter };
+      this._confirm(tt.reset_confirm.replace("{part}", (labels[key] || "").toLowerCase()),
+        () => call("button", "press", { entity_id: id }));
+    });
+  }
+
+  _confirm(msg, onOk) {
+    const modal = this.querySelector('[data-el="confirm"]');
+    if (!modal) { if (onOk) onOk(); return; }
+    this.querySelector('[data-el="confirmmsg"]').textContent = msg;
+    modal.hidden = false;
+    const yes = this.querySelector('[data-el="confirmyes"]');
+    const no = this.querySelector('[data-el="confirmno"]');
+    const bg = this.querySelector('[data-el="confirmbg"]');
+    const cleanup = () => {
+      modal.hidden = true;
+      yes.removeEventListener("click", onYes);
+      no.removeEventListener("click", onNo);
+      bg.removeEventListener("click", onNo);
+    };
+    const onYes = () => { cleanup(); if (onOk) onOk(); };
+    const onNo = () => cleanup();
+    yes.addEventListener("click", onYes);
+    no.addEventListener("click", onNo);
+    bg.addEventListener("click", onNo);
   }
 
   _startMapTimer() { if (this._mapTimer) clearInterval(this._mapTimer); this._refreshMap(); this._mapTimer = setInterval(() => this._refreshMap(), 20000); }
@@ -443,8 +630,8 @@ class IlifeVacuumCard extends HTMLElement {
     return d.toLocaleDateString(t.locale, { weekday: "short", day: "numeric", month: "short" }) + (withDate ? " " + hm : "");
   }
 
-  _kpi(icon, val, label, gauge) {
-    return `<div class="vc-kpi"><div class="ic"><ha-icon icon="${icon}"></ha-icon></div>
+  _kpi(icon, val, label, gauge, resetKey) {
+    return `<div class="vc-kpi">${resetKey ? `<button class="vc-kpi-reset" data-reset="${resetKey}" title="${this._t.reset}"><ha-icon icon="mdi:restore"></ha-icon></button>` : ""}<div class="ic"><ha-icon icon="${icon}"></ha-icon></div>
       <div class="v vc-num">${val}</div><div class="l">${label}</div>
       ${gauge != null ? `<div class="vc-gauge"><i style="width:${Math.max(0, Math.min(100, gauge))}%;${gauge <= 15 ? "background:var(--warning-color,#f9a825)" : ""}"></i></div>` : ""}</div>`;
   }
@@ -463,7 +650,10 @@ class IlifeVacuumCard extends HTMLElement {
     root.classList.toggle("cleaning", vs.state === "cleaning");
 
     q("name").textContent = vs.attributes.friendly_name || "ILIFE";
-    q("state").textContent = (!online && e.online) ? t.offline : (t.st[vs.state] || vs.state);
+    const stTxt = t.st[vs.state] || vs.state;
+    q("state").textContent = (!online && e.online)
+      ? (["docked", "idle", "paused"].includes(vs.state) ? `${stTxt} · ${t.sleeping}` : t.offline)
+      : stTxt;
 
     const bv = e.battery ? num(e.battery) : null;
     if (q("batt")) {
@@ -477,7 +667,7 @@ class IlifeVacuumCard extends HTMLElement {
       } else q("batt").hidden = true;
     }
 
-    if (q("badgetxt")) q("badgetxt").textContent = (!online && e.online) ? t.offline : t.live;
+    if (q("badgetxt")) q("badgetxt").textContent = (!online && e.online) ? t.sleeping : t.live;
 
     if (q("scrim")) {
       if (vs.state === "cleaning") {
@@ -512,23 +702,25 @@ class IlifeVacuumCard extends HTMLElement {
         const last = cleans.find((c) => c.map);
         const dec = last && decodeCleanMap(last.map);
         if (dec && dec.cells.length) {
-          drawMapCells(hero, dec.cells, 360, 260);
+          this._heroCells = dec.cells;
           hero.hidden = false; img.hidden = true; usedHero = true;
+          this._fitHero();
           if (q("badgetxt") && online) q("badgetxt").textContent = t.last_run;
         }
       }
-      if (!usedHero) { hero.hidden = true; img.hidden = false; }
+      if (!usedHero) { this._heroCells = null; hero.hidden = true; img.hidden = false; }
     }
     const totArea = cleans.reduce((s, c) => s + (Number(c.area) || 0), 0);
     const totMin = cleans.reduce((s, c) => s + (Number(c.duration) || 0), 0);
     const fmtDur = (m) => m >= 60 ? Math.floor(m / 60) + "h" + (m % 60 ? String(m % 60).padStart(2, "0") : "") : m + "min";
-    const brush = e.brush ? num(e.brush) : null, filt = e.filter ? num(e.filter) : null;
+    const brush = e.brush ? num(e.brush) : null, side = e.side ? num(e.side) : null, filt = e.filter ? num(e.filter) : null;
     if (q("kpis")) {
       let k = this._kpi("mdi:counter", cycles, t.cycles) +
         this._kpi("mdi:ruler-square", totArea.toFixed(1) + " m²", t.area) +
         this._kpi("mdi:timer-outline", fmtDur(totMin), t.total_time);
-      if (brush != null) k += this._kpi("mdi:brush", Math.round(brush) + "%", t.brush, brush);
-      if (filt != null) k += this._kpi("mdi:air-filter", Math.round(filt) + "%", t.filter, filt);
+      if (brush != null) k += this._kpi("mdi:brush", Math.round(brush) + "%", t.brush, brush, e.buttons.resetmain ? "resetmain" : null);
+      if (side != null) k += this._kpi("mdi:brush-variant", Math.round(side) + "%", t.side_brush, side, e.buttons.resetside ? "resetside" : null);
+      if (filt != null) k += this._kpi("mdi:air-filter", Math.round(filt) + "%", t.filter, filt, e.buttons.resetfilter ? "resetfilter" : null);
       q("kpis").innerHTML = k;
     }
     if (q("histcount")) q("histcount").textContent = cycles ? `${cycles} ${cycles > 1 ? t.sessions : t.session}` : "";
@@ -560,31 +752,30 @@ class IlifeVacuumCard extends HTMLElement {
     this.querySelectorAll(".vc-stime").forEach((t2) => { const s = hass.states[t2.dataset.ent]; if (s && s.state && s.state.length >= 5 && document.activeElement !== t2) t2.value = s.state.slice(0, 5); });
   }
 
-  disconnectedCallback() { if (this._mapTimer) clearInterval(this._mapTimer); }
+  disconnectedCallback() { if (this._mapTimer) clearInterval(this._mapTimer); if (this._ro) this._ro.disconnect(); if (this._roMap) this._roMap.disconnect(); if (this._fitRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._fitRaf); }
 }
 if (!customElements.get("ilife-vacuum-card")) customElements.define("ilife-vacuum-card", IlifeVacuumCard);
 
+// Visual editor built on the native <ha-form> selector, so adding the card is a
+// modern point-and-click flow (pick the vacuum; everything else is auto-detected).
+const EDITOR_SCHEMA = [{ name: "entity", selector: { entity: { domain: "vacuum" } } }];
 class IlifeVacuumCardEditor extends HTMLElement {
   setConfig(config) { this._config = Object.assign({}, config); this._render(); }
   set hass(hass) { this._hass = hass; this._render(); }
   _render() {
     if (!this._hass) return;
-    if (!this._built) {
-      this.innerHTML = `<style>.ed{padding:8px 4px;display:flex;flex-direction:column;gap:8px}.ed label{font-size:.9em;color:var(--secondary-text-color)}
-        .ed select{padding:8px;border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color);border:1px solid var(--divider-color)}
-        .ed .hint{font-size:.8em;color:var(--secondary-text-color)}</style>
-        <div class="ed"><label>Vacuum entity</label><select data-el="ent"></select>
-        <span class="hint">The other entities are detected automatically.</span></div>`;
-      this._built = true;
-      this.querySelector('[data-el="ent"]').addEventListener("change", (ev) => {
-        this._config = Object.assign({}, this._config, { entity: ev.target.value });
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = (s) => (s.name === "entity" ? "ILIFE vacuum" : s.name);
+      this._form.addEventListener("value-changed", (ev) => {
+        this._config = ev.detail.value;
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
       });
+      this.appendChild(this._form);
     }
-    const sel = this.querySelector('[data-el="ent"]');
-    const vacs = Object.keys(this._hass.states).filter((e) => e.startsWith("vacuum.")).sort();
-    sel.innerHTML = `<option value="">—</option>` + vacs.map((v) => `<option value="${v}">${this._hass.states[v].attributes.friendly_name || v}</option>`).join("");
-    if (this._config.entity) sel.value = this._config.entity;
+    this._form.hass = this._hass;
+    this._form.schema = EDITOR_SCHEMA;
+    this._form.data = this._config;
   }
 }
 if (!customElements.get("ilife-vacuum-card-editor")) customElements.define("ilife-vacuum-card-editor", IlifeVacuumCardEditor);

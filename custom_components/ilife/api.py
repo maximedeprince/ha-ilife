@@ -55,6 +55,10 @@ class ILifeAuthError(ILifeError):
     """Invalid credentials."""
 
 
+class ILifeOfflineError(ILifeError):
+    """Device unreachable from the cloud (asleep at the dock) — command not delivered."""
+
+
 # --------------------------------------------------------------------------- #
 #  Map decoding helpers (CleanMapData = 2-bit-per-pixel bitmap, tiled in packs)
 # --------------------------------------------------------------------------- #
@@ -318,9 +322,14 @@ class ILifeDevice:
         if tag is not None:
             d["tag"] = str(tag)
         r = self._iot("/thing/properties/set", d)
-        if r.get("code") != 200:
+        code = r.get("code")
+        if code != 200:
             _LOGGER.debug("ILIFE set %s failed: %s", name, r)
-            raise ILifeError(f"set {name} failed (code {r.get('code')})")
+            # 9201 = Alibaba IoT "device offline": the vacuum drops its cloud link
+            # while asleep at the dock, so on-demand commands can't be delivered.
+            if code in (9201, "9201"):
+                raise ILifeOfflineError(f"set {name} failed: device offline (code {code})")
+            raise ILifeError(f"set {name} failed (code {code})")
         return True
 
     def set_schedule(self, n, struct):
@@ -379,3 +388,20 @@ class ILifeDevice:
 
     def clean_direction(self, direction):
         return self.set_prop("CleanDirection", direction, direction)
+
+    def reset_part(self, field, current):
+        """Reset a consumable life counter to 100% (new). Mirrors the app: the full
+        PartsStatus struct is sent (tag 7, no key), the target field set to 100 and
+        the two others preserved at their current values."""
+        struct = {k: (current or {}).get(k, 100)
+                  for k in ("FilterLife", "SideBrushLife", "MainBrushLife")}
+        struct[field] = 100
+        d = {"iotId": self.iot_id, "tag": 7, "items": {"PartsStatus": struct}}
+        r = self._iot("/thing/properties/set", d)
+        code = r.get("code")
+        if code != 200:
+            _LOGGER.debug("ILIFE reset %s failed: %s", field, r)
+            if code in (9201, "9201"):
+                raise ILifeOfflineError(f"reset {field} failed: device offline (code {code})")
+            raise ILifeError(f"reset {field} failed (code {code})")
+        return True
