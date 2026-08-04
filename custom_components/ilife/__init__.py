@@ -20,7 +20,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import ILifeAccount, ILifeAuthError, ILifeDevice, ILifeError
-from .const import DEFAULT_START_MODE, DOMAIN
+from .const import CLEANING_MODES, DEFAULT_START_MODE, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [
@@ -51,6 +51,10 @@ class ILifeCoordinator(DataUpdateCoordinator):
         self.history: list[dict] = []
         self.online: bool | None = None
         self._hist_next = 0.0
+        # live map accumulation: RealTimeMap.MapData is only a small rolling window,
+        # so we merge successive windows into the full current-clean map.
+        self._rtmap_cells: dict[tuple[int, int], int] = {}
+        self._rtmap_session: Any = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -68,7 +72,31 @@ class ILifeCoordinator(DataUpdateCoordinator):
                 await self.hass.async_add_executor_job(self._archive_maps)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("ILIFE history unavailable", exc_info=True)
+        self._merge_rtmap(state)
         return state
+
+    def _merge_rtmap(self, state: dict) -> None:
+        """While cleaning, accumulate the rolling RealTimeMap windows into the full
+        map and inject it back so the camera renders the whole clean, not a fragment."""
+        from .map import decode_cells, encode_cells
+
+        rtm = state.get("RealTimeMap") or {}
+        cleaning = state.get("WorkMode") in CLEANING_MODES
+        if not cleaning:
+            self._rtmap_session = None  # next clean starts a fresh map
+            return
+        md = rtm.get("MapData")
+        if not md:
+            return
+        session = state.get("RealTimeMapStart")
+        if session != self._rtmap_session:
+            self._rtmap_session = session
+            self._rtmap_cells = {}
+        for x, y, t in decode_cells(md):
+            self._rtmap_cells[(x, y)] = t
+        merged = dict(rtm)
+        merged["MapData"] = encode_cells(self._rtmap_cells)
+        state["RealTimeMap"] = merged
 
     def _archive_maps(self) -> None:
         """Save each clean's map as a tiny PNG under www/ilife_maps/ (permanent gallery)."""

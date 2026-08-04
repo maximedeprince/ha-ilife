@@ -123,7 +123,8 @@ class IlifeVacuumCard extends HTMLElement {
     const tk = (id) => reg[id]?.translation_key || "";
     const dom = (id) => id.split(".")[0];
     const e = { vacuum: cfgEnt || null, map: null, water: null, mode: null, carpet: null,
-      battery: null, history: null, online: null, brush: null, side: null, filter: null, buttons: {}, schedules: {} };
+      battery: null, history: null, online: null, brush: null, side: null, filter: null,
+      curarea: null, curtime: null, buttons: {}, schedules: {} };
     for (const id of ids) {
       const d = dom(id), k = tk(id);
       if (d === "vacuum") { if (!e.vacuum) e.vacuum = id; }
@@ -146,6 +147,8 @@ class IlifeVacuumCard extends HTMLElement {
         else if (k === "main_brush") e.brush = id;
         else if (k === "side_brush") e.side = id;
         else if (k === "filter") e.filter = id;
+        else if (k === "current_area") e.curarea = id;
+        else if (k === "current_time") e.curtime = id;
       }
     }
     return e;
@@ -672,7 +675,13 @@ class IlifeVacuumCard extends HTMLElement {
     if (q("scrim")) {
       if (vs.state === "cleaning") {
         const fs = vs.attributes.fan_speed || "";
-        q("scrim").innerHTML = `<span><b>${bv != null ? Math.round(bv) : "?"}%</b> ${t.battery}</span>${fs ? `<span>· ${fs}</span>` : ""}`;
+        const ct = e.curtime ? num(e.curtime) : null, ca = e.curarea ? num(e.curarea) : null;
+        const parts = [];
+        if (ct != null) parts.push(`<b>${ct}</b> min`);
+        if (ca != null) parts.push(`<b>${ca}</b> m²`);
+        if (bv != null) parts.push(`<b>${Math.round(bv)}</b>% ${t.battery}`);
+        if (fs) parts.push(fs);
+        q("scrim").innerHTML = parts.map((p, i) => `<span>${i ? "· " : ""}${p}</span>`).join("");
         q("scrim").hidden = false;
       } else q("scrim").hidden = true;
     }

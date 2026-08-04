@@ -44,6 +44,12 @@
       "filter": {
         "name": "Filter"
       },
+      "current_area": {
+        "name": "Current area"
+      },
+      "current_time": {
+        "name": "Current duration"
+      },
       "last_area": {
         "name": "Last area"
       },

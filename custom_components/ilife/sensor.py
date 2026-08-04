@@ -10,12 +10,20 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE, UnitOfArea, UnitOfTime
 
-from .const import DOMAIN
+from .const import CLEANING_MODES, DOMAIN
 from .entity import ILifeEntity
 
 
 def _parts(state, field):
     return (state.get("PartsStatus") or {}).get(field)
+
+
+def _rtm(state, field):
+    return (state.get("RealTimeMap") or {}).get(field)
+
+
+def _cleaning(state):
+    return state.get("WorkMode") in CLEANING_MODES
 
 
 def _hist(state, field):
@@ -42,6 +50,10 @@ SENSORS = [
      lambda s: _parts(s, "SideBrushLife"), None),
     ("filter", "mdi:air-filter", PERCENTAGE, SensorStateClass.MEASUREMENT,
      lambda s: _parts(s, "FilterLife"), None),
+    ("current_area", "mdi:vector-square", UnitOfArea.SQUARE_METERS, SensorStateClass.MEASUREMENT,
+     lambda s: round((_rtm(s, "CleanArea") or 0) / 100, 1) if _cleaning(s) else None, None),
+    ("current_time", "mdi:timer-play-outline", UnitOfTime.MINUTES, SensorStateClass.MEASUREMENT,
+     lambda s: round((_rtm(s, "CleanTime") or 0) / 60) if _cleaning(s) else None, None),
     ("last_area", "mdi:ruler-square", UnitOfArea.SQUARE_METERS, None,
      lambda s: round((_hist(s, "CleanTotalArea") or 0) / 100, 1) or None, None),
     ("last_duration", "mdi:timer-outline", UnitOfTime.MINUTES, None,

@@ -48,6 +48,20 @@ def decode_cells(b64):
     return out
 
 
+def encode_cells(cells):
+    """Ré-encode des cellules -> MapData base64 (records 5 octets [int16 x][int16 y][uint8 type]).
+    `cells` = dict {(x, y): type} ou itérable de (x, y, type)."""
+    out = bytearray()
+    items = cells.items() if isinstance(cells, dict) else cells
+    for item in items:
+        (x, y), t = (item[0], item[1]) if isinstance(cells, dict) else ((item[0], item[1]), item[2])
+        try:
+            out += struct.pack(">hhB", int(x), int(y), int(t) & 0xFF)
+        except struct.error:
+            continue
+    return base64.b64encode(bytes(out)).decode()
+
+
 def decode_clean_bitmap(b64):
     """CleanMapData assemblé (bitmap 2 bits/pixel) -> liste (x, y, type) pour type in {1,2}."""
     if not b64:

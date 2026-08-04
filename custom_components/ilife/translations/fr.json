@@ -44,6 +44,12 @@
       "filter": {
         "name": "Filtre"
       },
+      "current_area": {
+        "name": "Surface en cours"
+      },
+      "current_time": {
+        "name": "Durée en cours"
+      },
       "last_area": {
         "name": "Dernière surface"
       },
