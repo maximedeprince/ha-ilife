@@ -1,4 +1,8 @@
-"""ILIFE sensors: battery, consumable wear, last clean, history."""
+"""ILIFE sensors: battery, consumable wear, last clean, history.
+
+Also covers ILIFE Clean (Tuya): battery/current-area/current-time/fault plus a generic
+sensor for any other status DP the device reports that isn't already a switch/select.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -10,8 +14,18 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE, UnitOfArea, UnitOfTime
 
-from .const import CLEANING_MODES, DOMAIN
+from .const import (
+    BACKEND_ILIFE_CLEAN,
+    CLEANING_MODES,
+    DOMAIN,
+    TUYA_DP_BATTERY,
+    TUYA_DP_CLEAN_AREA,
+    TUYA_DP_CLEAN_TIME,
+    TUYA_DP_FAULT,
+)
 from .entity import ILifeEntity
+from .tuya_dynamic import unknown_status_values
+from .tuya_entity import TuyaEntity
 
 
 def _parts(state, field):
@@ -66,9 +80,32 @@ SENSORS = [
 async def async_setup_entry(hass, entry, async_add_entities):
     data = hass.data[DOMAIN][entry.entry_id]
     entities = []
-    for coordinator in data["coordinators"].values():
-        entities += [ILifeSensor(coordinator, *s) for s in SENSORS]
-        entities.append(ILifeHistorySensor(coordinator))
+    if data.get("backend") == BACKEND_ILIFE_CLEAN:
+        for coordinator in data["coordinators"].values():
+            status = coordinator.data or {}
+            if TUYA_DP_BATTERY in status:
+                entities.append(TuyaSensor(coordinator, "battery", "mdi:battery", PERCENTAGE,
+                                           SensorStateClass.MEASUREMENT, TUYA_DP_BATTERY,
+                                           SensorDeviceClass.BATTERY))
+            if TUYA_DP_CLEAN_AREA in status:
+                entities.append(TuyaSensor(coordinator, "current_area", "mdi:vector-square",
+                                           UnitOfArea.SQUARE_METERS,
+                                           SensorStateClass.MEASUREMENT, TUYA_DP_CLEAN_AREA,
+                                           None))
+            if TUYA_DP_CLEAN_TIME in status:
+                entities.append(TuyaSensor(coordinator, "current_time",
+                                           "mdi:timer-play-outline", UnitOfTime.MINUTES,
+                                           SensorStateClass.MEASUREMENT, TUYA_DP_CLEAN_TIME,
+                                           None))
+            if TUYA_DP_FAULT in status:
+                entities.append(TuyaSensor(coordinator, "fault", "mdi:alert-circle-outline",
+                                           None, None, TUYA_DP_FAULT, None))
+            for code in unknown_status_values(coordinator.spec, status):
+                entities.append(TuyaGenericSensor(coordinator, code))
+    else:
+        for coordinator in data["coordinators"].values():
+            entities += [ILifeSensor(coordinator, *s) for s in SENSORS]
+            entities.append(ILifeHistorySensor(coordinator))
     async_add_entities(entities)
 
 
@@ -110,3 +147,40 @@ class ILifeHistorySensor(ILifeEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return {"cleans": self.coordinator.history or []}
+
+
+class TuyaSensor(TuyaEntity, SensorEntity):
+    """A curated ILIFE Clean (Tuya) DP with a known meaning and unit."""
+
+    def __init__(self, coordinator, key, icon, unit, state_class, code, device_class):
+        super().__init__(coordinator)
+        self._code = code
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{self.api.device_id}_{key}"
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._attr_state_class = state_class
+        self._attr_device_class = device_class
+
+    @property
+    def native_value(self):
+        return (self.coordinator.data or {}).get(self._code)
+
+
+class TuyaGenericSensor(TuyaEntity, SensorEntity):
+    """Any other status DP the device reports that isn't a switch/select (e.g. a
+    consumable-life counter or self-empty status) under whatever code name this unit
+    actually uses for it."""
+
+    _attr_icon = "mdi:information-outline"
+
+    def __init__(self, coordinator, code):
+        super().__init__(coordinator)
+        self._code = code
+        self._attr_name = code.replace("_", " ").title()
+        self._attr_unique_id = f"{self.api.device_id}_{code}"
+
+    @property
+    def native_value(self):
+        v = (self.coordinator.data or {}).get(self._code)
+        return v if isinstance(v, (str, int, float)) else str(v) if v is not None else None

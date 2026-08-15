@@ -2,6 +2,14 @@
   "config": {
     "step": {
       "user": {
+        "title": "Choisissez votre application ILIFE",
+        "description": "Choisissez l'application avec laquelle votre aspirateur est configuré.",
+        "menu_options": {
+          "ilifehome": "ILIFEHOME (cloud Alibaba IoT)",
+          "ilife_clean": "ILIFE Clean (basé sur Tuya, ex. T20s)"
+        }
+      },
+      "ilifehome": {
         "description": "Connectez-vous avec votre compte ILIFE (ILIFEHOME). Choisissez la région où votre compte a été créé.",
         "data": {
           "email": "E-mail",
@@ -9,10 +17,26 @@
           "region": "Région"
         }
       },
+      "ilife_clean": {
+        "description": "Les aspirateurs ILIFE Clean (ex. le T20s) fonctionnent sur le cloud Tuya, pas sur ILIFEHOME. Créez un projet Cloud Tuya IoT gratuit sur iot.tuya.com (méthode de développement « Smart Home »), liez votre compte ILIFE Clean à ce projet via Devices → Link Tuya App Account, puis saisissez ici l'Access ID, l'Access Secret et l'UID du compte lié. Les étapes complètes sont dans le README.",
+        "data": {
+          "access_id": "Access ID (Client ID)",
+          "access_secret": "Access Secret (Client Secret)",
+          "uid": "UID du compte lié",
+          "region": "Centre de données"
+        }
+      },
       "reauth_confirm": {
         "description": "Ressaisissez le mot de passe pour {email}.",
         "data": {
           "password": "Mot de passe"
+        }
+      },
+      "reauth_confirm_tuya": {
+        "description": "Ressaisissez l'Access ID et l'Access Secret du projet Cloud Tuya.",
+        "data": {
+          "access_id": "Access ID (Client ID)",
+          "access_secret": "Access Secret (Client Secret)"
         }
       }
     },
@@ -61,6 +85,9 @@
       },
       "history": {
         "name": "Historique"
+      },
+      "fault": {
+        "name": "Défaut"
       }
     },
     "binary_sensor": {
