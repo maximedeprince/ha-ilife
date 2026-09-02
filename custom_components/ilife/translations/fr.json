@@ -4,6 +4,7 @@
       "user": {
         "description": "Connectez-vous avec votre compte ILIFE (ILIFEHOME). Choisissez la région où votre compte a été créé.",
         "data": {
+          "brand": "Marque",
           "email": "E-mail",
           "password": "Mot de passe",
           "region": "Région"

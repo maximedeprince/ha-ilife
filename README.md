@@ -18,6 +18,24 @@ Lovelace card.
 > Tested with the **ILIFE V3x** on the **ILIFEHOME** app, **EU** region.
 > Other 3irobotix‑based ILIFE models likely work — **testers welcome** (see below).
 
+
+## Whitelabels (multi-brand)
+
+ILIFE ships several rebranded apps on the **same** Alibaba Living Link platform (same
+login handshake, endpoints and device logic) — they differ only in a small tenant
+profile. The integration supports these via **brand profiles** (`brands.py`), chosen
+in the config flow:
+
+| Brand | App / package | IoT appKey | Default region |
+|-------|---------------|-----------|----------------|
+| `ilife` | ILIFE (`com.ilife.home.global`) | 29416808 | eu |
+| `ava`   | AVA PRO MAX (`com.robot.ava`)   | 33417005 | us |
+
+Adding a brand = one entry in `brands.py` (its API-Gateway appKey/appSecret, OpenAccount
+appID/appVersion and default region) + it appears in the setup dropdown automatically.
+The AVA profile was validated end-to-end against the live us-east-1 cloud.
+
+
 ## Features
 
 - 🧹 Full vacuum entity: start / pause / stop / return to dock / locate

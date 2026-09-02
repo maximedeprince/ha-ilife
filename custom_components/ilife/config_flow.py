@@ -11,14 +11,15 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, CONF_REGION
 
 from .api import REGIONS, ILifeAccount, ILifeAuthError, ILifeError
-from .const import DOMAIN
+from .brands import BRANDS, DEFAULT_BRAND
+from .const import CONF_BRAND, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def _validate(hass, email_addr: str, password: str, region: str) -> None:
+async def _validate(hass, email_addr: str, password: str, region: str, brand: str) -> None:
     """Raise ILifeAuthError / ILifeError if credentials are wrong / unreachable."""
-    account = ILifeAccount(email_addr, password, region)
+    account = ILifeAccount(email_addr, password, region, brand)
     await hass.async_add_executor_job(account.login)
 
 
@@ -34,7 +35,7 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
             email_addr = user_input[CONF_EMAIL]
             try:
                 await _validate(self.hass, email_addr, user_input[CONF_PASSWORD],
-                                user_input[CONF_REGION])
+                                user_input[CONF_REGION], user_input[CONF_BRAND])
             except ILifeAuthError:
                 errors["base"] = "invalid_auth"
             except ILifeError as err:
@@ -51,6 +52,8 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema({
+                vol.Required(CONF_BRAND, default=DEFAULT_BRAND):
+                    vol.In({k: b.name for k, b in BRANDS.items()}),
                 vol.Required(CONF_EMAIL): str,
                 vol.Required(CONF_PASSWORD): str,
                 vol.Required(CONF_REGION, default="eu"): vol.In(list(REGIONS)),
@@ -69,9 +72,10 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reauth_entry()
         if user_input is not None:
             region = entry.data.get(CONF_REGION, "eu")
+            brand = entry.data.get(CONF_BRAND, DEFAULT_BRAND)
             try:
                 await _validate(self.hass, entry.data[CONF_EMAIL],
-                                user_input[CONF_PASSWORD], region)
+                                user_input[CONF_PASSWORD], region, brand)
             except ILifeAuthError:
                 errors["base"] = "invalid_auth"
             except ILifeError:
