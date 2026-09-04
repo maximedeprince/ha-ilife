@@ -16,6 +16,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -166,6 +167,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for k in ("_card_served", "_card_registered"):
                 hass.data.get(DOMAIN, {}).pop(k, None)
     return unloaded
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device: DeviceEntry
+) -> bool:
+    """Allow deleting a device from the UI only if it is gone from the account.
+
+    A vacuum that was unbound (replaced, sold, reset) stays in the registry as an
+    unavailable "ghost" device. This lets the user remove it. A device that is
+    still bound is kept, since it would just be recreated on the next refresh.
+    """
+    store = hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}
+    active = set((store.get("coordinators") or {}).keys())
+    iot_ids = {ident for (dom, ident) in device.identifiers if dom == DOMAIN}
+    return iot_ids.isdisjoint(active)
 
 
 # --------------------------------------------------------------------------- #

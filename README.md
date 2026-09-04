@@ -47,6 +47,7 @@ The AVA profile was validated end-to-end against the live us-east-1 cloud.
 - 🖼️ Each cleaning is archived as a tiny PNG in `www/ilife_maps/`
 - 🧩 Bundled **ILIFE Vacuum Card** — added from the UI, **responsive** (2 columns on desktop, 1 on mobile), English + French
 - 👥 Multiple vacuums and multiple accounts supported
+- 🧾 **Download diagnostics** (credentials redacted) and 🗑️ **remove old / replaced devices** from the UI
 
 ## Installation (HACS)
 
@@ -74,7 +75,9 @@ The card is registered automatically for storage‑mode dashboards. For
 The code is written to be generic, so other 3irobotix‑based ILIFE vacuums have a
 good chance of working. If you own a **different model**, please try it and
 [open an issue](https://github.com/maximedeprince/ha-ilife/issues/new/choose)
-with your model and **debug logs** — that's what lets me add support.
+with your model, **debug logs** and the **diagnostics file** (see below) — that's
+what lets me add support. For a **blank or wrong map**, the diagnostics file is
+the key: it contains the raw map fields your model actually reports.
 
 ## Troubleshooting — debug logs
 
@@ -87,6 +90,20 @@ logger:
   logs:
     custom_components.ilife: debug
 ```
+
+### Diagnostics file
+
+For map or model‑specific problems, the fastest way to help is the diagnostics
+file. Go to **Settings → Devices & Services → ILIFE Vacuum → ⋮ → Download
+diagnostics** (there is also a per‑device button). It contains the raw property
+payload each vacuum reports — including the map data — with your email, password
+and device IDs **redacted**. Attach it to the issue.
+
+### Removing an old device
+
+Replaced or sold a vacuum? Once it is gone from your ILIFE account, open the
+device page → **⋮ → Delete**. Devices that are still on the account cannot be
+removed this way (they would just come back on the next refresh).
 
 ## Notes
 
