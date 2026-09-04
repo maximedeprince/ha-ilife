@@ -36,7 +36,8 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 await _validate(self.hass, email_addr, user_input[CONF_PASSWORD],
                                 user_input[CONF_REGION], user_input[CONF_BRAND])
-            except ILifeAuthError:
+            except ILifeAuthError as err:
+                _LOGGER.warning("ILIFE authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
             except ILifeError as err:
                 _LOGGER.debug("ILIFE cannot_connect: %s", err)
@@ -76,7 +77,8 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 await _validate(self.hass, entry.data[CONF_EMAIL],
                                 user_input[CONF_PASSWORD], region, brand)
-            except ILifeAuthError:
+            except ILifeAuthError as err:
+                _LOGGER.warning("ILIFE re-authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
             except ILifeError:
                 errors["base"] = "cannot_connect"

@@ -208,7 +208,7 @@ class ILifeAccount:
 
     def __init__(self, email_addr: str, password: str, region: str | None = None,
                  brand: str = "ilife") -> None:
-        self._email = email_addr
+        self._email = email_addr.strip()
         self._password = password
         self.brand: Brand = get_brand(brand)
         region = region or self.brand.default_region
@@ -253,7 +253,17 @@ class ILifeAccount:
                        {"loginRequest": json.dumps(login_req)}, extra={"vid": vid})
         ld = r.get("data", {})
         if ld.get("code") != 1:
-            raise ILifeAuthError(ld.get("message", "invalid credentials"))
+            # Surface the server's own reason. A login that is valid in the app can
+            # still be refused here by Alibaba OA (risk-control / captcha step,
+            # locked account, region mismatch...). Logged at warning so it shows up
+            # in the HA log without any extra debug configuration -- previously this
+            # path was silent and the user only ever saw a generic "invalid_auth".
+            _LOGGER.warning("ILIFE login refused by server: code=%s message=%s",
+                            ld.get("code"), ld.get("message"))
+            _LOGGER.debug("ILIFE login.json response: %s", r)
+            raise ILifeAuthError(
+                f"login refused (code {ld.get('code')}): "
+                f"{ld.get('message') or 'invalid credentials'}")
         sid = ld.get("data", {}).get("loginSuccessResult", {}).get("sid")
         r = _post_iot(self.brand, self.api_host, "/account/createSessionByAuthCode",
                       {"request": {"authCode": sid, "accountType": "OA_SESSION", "appKey": self.brand.appkey}},
