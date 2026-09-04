@@ -1,5 +1,6 @@
 """Constants for the ILIFE integration."""
 DOMAIN = "ilife"
+CONF_BRAND = "brand"   # config-entry key: which whitelabel profile (see brands.py)
 
 # WorkMode groups used to derive the vacuum activity
 CLEANING_MODES = {3, 4, 5, 6, 13, 10}

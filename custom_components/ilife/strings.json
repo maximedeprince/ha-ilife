@@ -2,8 +2,9 @@
   "config": {
     "step": {
       "user": {
-        "description": "Sign in with your ILIFE (ILIFEHOME) account. Pick the region your account was created in.",
+        "description": "Sign in with your ILIFE / whitelabel (e.g. AVA) account. Pick your brand and the region your account was created in.",
         "data": {
+          "brand": "Brand",
           "email": "Email",
           "password": "Password",
           "region": "Region"

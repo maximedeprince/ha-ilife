@@ -21,10 +21,12 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from .brands import Brand, get_brand
+
 _LOGGER = logging.getLogger(__name__)
 
-APPKEY = "29416808"
-APPSECRET = b"784477c4f4e56b453da510f248282844"
+# Shared across all whitelabels (OpenAccount SDK-level constants). Per-brand values
+# (appKey/appSecret/appID/appVersion/region) live in brands.py.
 OA_HOST = "sdk.openaccount.aliyun.com"
 UTDID = "amDvkNT/EMgDAN2WcKz0yYap"
 RSA_PUB = (
@@ -133,16 +135,16 @@ def _rsa_encrypt_pw(pw: str) -> str:
     return base64.b64encode(key.encrypt(pw.encode(), padding.PKCS1v15())).decode()
 
 
-def _headers(accept, ctype, content_md5, sign_url, extra=None):
+def _headers(brand: Brand, accept, ctype, content_md5, sign_url, extra=None):
     nonce = str(uuid.uuid4())
     ts = str(int(time.time() * 1000))
     date = email.utils.formatdate(usegmt=True)
-    signed = {"x-ca-key": APPKEY, "x-ca-nonce": nonce,
+    signed = {"x-ca-key": brand.appkey, "x-ca-nonce": nonce,
               "x-ca-signature-method": "HmacSHA1", "x-ca-timestamp": ts}
     hstr = "".join(f"{k}:{signed[k]}\n" for k in sorted(signed))
     sts = f"POST\n{accept}\n{content_md5}\n{ctype}\n{date}\n{hstr}{sign_url}"
-    sig = base64.b64encode(hmac.new(APPSECRET, sts.encode(), hashlib.sha1).digest()).decode()
-    h = {"date": date, "x-ca-signature": sig, "x-ca-nonce": nonce, "x-ca-key": APPKEY,
+    sig = base64.b64encode(hmac.new(brand.appsecret, sts.encode(), hashlib.sha1).digest()).decode()
+    h = {"date": date, "x-ca-signature": sig, "x-ca-nonce": nonce, "x-ca-key": brand.appkey,
          "ca_version": "1", "accept": accept, "x-ca-timestamp": ts,
          "x-ca-signature-headers": "x-ca-nonce,x-ca-timestamp,x-ca-key,x-ca-signature-method",
          "x-ca-signature-method": "HmacSHA1", "user-agent": "ALIYUN-ANDROID-DEMO",
@@ -175,16 +177,16 @@ def _do(host, path, headers, body):
         raise ILifeError(f"non-JSON response from {path}: {snippet!r}") from e
 
 
-def _post_form(host, path, form, extra=None):
+def _post_form(brand: Brand, host, path, form, extra=None):
     accept = "application/json; charset=utf-8"
     ctype = "application/x-www-form-urlencoded; charset=utf-8"
     sign_url = path + "?" + "&".join(f"{k}={form[k]}" for k in sorted(form))
-    h = _headers(accept, ctype, "", sign_url, extra)
+    h = _headers(brand, accept, ctype, "", sign_url, extra)
     body = "&".join(f"{k}={urllib.parse.quote(str(form[k]), safe='')}" for k in sorted(form)).encode()
     return _do(host, path, h, body)
 
 
-def _post_iot(host, path, d, token=None, api_ver="1.0.2"):
+def _post_iot(brand: Brand, host, path, d, token=None, api_ver="1.0.2"):
     rid = str(uuid.uuid4())
     c = {"apiVer": api_ver, "language": "en-US"}
     if token:
@@ -193,7 +195,7 @@ def _post_iot(host, path, d, token=None, api_ver="1.0.2"):
                        "params": {"$ref": "$.d"}, "request": {"$ref": "$.c"}, "version": "1.0"}).encode()
     cmd5 = base64.b64encode(hashlib.md5(body).digest()).decode()
     full_path = path + "?x-ca-request-id=" + rid
-    h = _headers("application/json; charset=utf-8", "application/octet-stream; charset=utf-8", cmd5, full_path)
+    h = _headers(brand, "application/json; charset=utf-8", "application/octet-stream; charset=utf-8", cmd5, full_path)
     return _do(host, full_path, h, body)
 
 
@@ -204,10 +206,13 @@ class ILifeAccount:
     """One ILIFE account session: login, shared iotToken, automatic re-auth,
     device listing and a short-lived online-status cache shared by all devices."""
 
-    def __init__(self, email_addr: str, password: str, region: str = DEFAULT_REGION) -> None:
+    def __init__(self, email_addr: str, password: str, region: str | None = None,
+                 brand: str = "ilife") -> None:
         self._email = email_addr
         self._password = password
-        self.region = region if region in REGIONS else DEFAULT_REGION
+        self.brand: Brand = get_brand(brand)
+        region = region or self.brand.default_region
+        self.region = region if region in REGIONS else self.brand.default_region
         self.api_host, self.login_host = REGIONS[self.region]
         self.token: str | None = None
         self._lock = threading.Lock()
@@ -217,15 +222,16 @@ class ILifeAccount:
     # --- auth ---
     def login(self) -> list[dict]:
         """Authenticate and return the full list of bound devices."""
-        ctx = {"context": {"sdkVersion": "3.4.2", "utDid": UTDID, "platformName": "android",
-                           "netType": "wifi", "appKey": APPKEY, "yunOSId": "", "appVersion": "1.9.43",
+        ctx = {"context": {"sdkVersion": self.brand.sdk_version, "utDid": UTDID, "platformName": "android",
+                           "netType": "wifi", "appKey": self.brand.appkey, "yunOSId": "",
+                           "appVersion": self.brand.app_version,
                            "appAuthToken": "", "securityToken": ""},
                 "config": {"version": 0, "lastModify": 0},
                 "device": {"model": "sdk_gphone_x86_64", "brand": "goldfish_x86_64", "platformVersion": "30"}}
         vid = device_id = None
         r = {}
         for attempt in range(4):
-            r = _post_form(OA_HOST, "/api/prd/connect.json", {"request": json.dumps(ctx)})
+            r = _post_form(self.brand, OA_HOST, "/api/prd/connect.json", {"request": json.dumps(ctx)})
             data = r.get("data", {})
             vid = data.get("vid")
             device_id = (((data.get("data") or {}).get("device") or {}).get("data") or {}).get("deviceId")
@@ -238,19 +244,19 @@ class ILifeAccount:
         login_req = {"password": _rsa_encrypt_pw(self._password), "loginId": self._email,
                      "riskControlInfo": {"appVersion": "123", "USE_OA_PWD_ENCRYPT": "true",
                         "utdid": "ffffffffffffffffffffffff", "netType": "wifi", "umidToken": "",
-                        "locale": "en_US", "appVersionName": "1.9.43", "deviceId": device_id,
+                        "locale": "en_US", "appVersionName": self.brand.app_version, "deviceId": device_id,
                         "routerMac": "02:00:00:00:00:00", "platformVersion": "30", "appAuthToken": "",
-                        "appID": "com.ilife.home.global", "signType": "RSA", "sdkVersion": "3.4.2",
+                        "appID": self.brand.oa_app_id, "signType": "RSA", "sdkVersion": self.brand.sdk_version,
                         "model": "sdk_gphone_x86_64", "USE_H5_NC": "true", "platformName": "android",
                         "brand": "google", "yunOSId": ""}}
-        r = _post_form(self.login_host, "/api/prd/login.json",
+        r = _post_form(self.brand, self.login_host, "/api/prd/login.json",
                        {"loginRequest": json.dumps(login_req)}, extra={"vid": vid})
         ld = r.get("data", {})
         if ld.get("code") != 1:
             raise ILifeAuthError(ld.get("message", "invalid credentials"))
         sid = ld.get("data", {}).get("loginSuccessResult", {}).get("sid")
-        r = _post_iot(self.api_host, "/account/createSessionByAuthCode",
-                      {"request": {"authCode": sid, "accountType": "OA_SESSION", "appKey": APPKEY}},
+        r = _post_iot(self.brand, self.api_host, "/account/createSessionByAuthCode",
+                      {"request": {"authCode": sid, "accountType": "OA_SESSION", "appKey": self.brand.appkey}},
                       api_ver="1.0.4")
         if r.get("code") != 200:
             _LOGGER.debug("ILIFE createSession failed: %s", r)
@@ -259,7 +265,7 @@ class ILifeAccount:
         return self.list_devices()
 
     def _iot(self, path, d, api_ver="1.0.2", _retry=True):
-        r = _post_iot(self.api_host, path, d, token=self.token, api_ver=api_ver)
+        r = _post_iot(self.brand, self.api_host, path, d, token=self.token, api_ver=api_ver)
         if r.get("code") != 200 and _retry:
             stale = self.token
             with self._lock:  # one re-login even if several device calls fail at once

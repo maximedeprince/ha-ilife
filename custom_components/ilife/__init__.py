@@ -20,7 +20,8 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import ILifeAccount, ILifeAuthError, ILifeDevice, ILifeError
-from .const import CLEANING_MODES, DEFAULT_START_MODE, DOMAIN
+from .brands import DEFAULT_BRAND
+from .const import CLEANING_MODES, CONF_BRAND, DEFAULT_START_MODE, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [
@@ -129,6 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     account = ILifeAccount(
         entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD],
         entry.data.get(CONF_REGION, "eu"),
+        entry.data.get(CONF_BRAND, DEFAULT_BRAND),
     )
     try:
         devices = await hass.async_add_executor_job(account.login)
