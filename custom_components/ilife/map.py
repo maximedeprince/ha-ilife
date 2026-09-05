@@ -183,6 +183,9 @@ def render_realmap_png(state):
         cx = (x - minx + margin) * cell
         cy = (y - miny + margin) * cell
         draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=col)
+    # The raw raster comes out landscape; rotate 90° clockwise to match the app's
+    # portrait orientation (validated against a user's L100 app screenshot).
+    img = img.rotate(270, expand=True)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
