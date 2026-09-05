@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE, UnitOfArea, UnitOfTime
 
+from .api import clean_area_m2
 from .const import CLEANING_MODES, DOMAIN
 from .entity import ILifeEntity
 
@@ -54,8 +55,10 @@ SENSORS = [
      lambda s: round((_rtm(s, "CleanArea") or 0) / 100, 1) if _cleaning(s) else None, None),
     ("current_time", "mdi:timer-play-outline", UnitOfTime.MINUTES, SensorStateClass.MEASUREMENT,
      lambda s: round((_rtm(s, "CleanTime") or 0) / 60) if _cleaning(s) else None, None),
+    # CleanTotalArea unit is model-dependent (m² on some models, 0.01 m² on others);
+    # clean_area_m2() disambiguates by magnitude.
     ("last_area", "mdi:ruler-square", UnitOfArea.SQUARE_METERS, None,
-     lambda s: round((_hist(s, "CleanTotalArea") or 0) / 100, 1) or None, None),
+     lambda s: clean_area_m2(_hist(s, "CleanTotalArea")) or None, None),
     ("last_duration", "mdi:timer-outline", UnitOfTime.MINUTES, None,
      lambda s: round((_hist(s, "CleanTotalTime") or 0) / 60) or None, None),
     ("last_clean", "mdi:calendar-check", None, None,
