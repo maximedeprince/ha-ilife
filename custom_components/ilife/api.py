@@ -61,6 +61,15 @@ class ILifeOfflineError(ILifeError):
     """Device unreachable from the cloud (asleep at the dock) — command not delivered."""
 
 
+def clean_area_m2(raw):
+    """CleanTotalArea (clean history) -> m². The unit is model-dependent: some
+    models report m² directly (e.g. L100: 36 == 36 m²), others report 0.01 m²
+    (e.g. 2337 == 23.37 m²). A single home clean is realistically well under
+    ~250 m², so values at or above that are treated as 0.01 m²."""
+    v = raw or 0
+    return round(v / 100, 1) if v >= 250 else round(float(v), 1)
+
+
 # --------------------------------------------------------------------------- #
 #  Map decoding helpers (CleanMapData = 2-bit-per-pixel bitmap, tiled in packs)
 # --------------------------------------------------------------------------- #
@@ -378,7 +387,7 @@ class ILifeDevice:
             if g is None:
                 g = groups[start] = {"start": start, "area": 0, "duration": 0,
                                      "reason": cd.get("StopCleanReason"), "packs": {}}
-            area = round((cd.get("CleanTotalArea") or 0) / 100, 1)
+            area = clean_area_m2(cd.get("CleanTotalArea"))
             dur = round((cd.get("CleanTotalTime") or 0) / 60)
             if area > g["area"]:
                 g["area"] = area
