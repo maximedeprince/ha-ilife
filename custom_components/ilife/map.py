@@ -116,6 +116,81 @@ def render_clean_map_png(b64, cell=8, margin=2):
     return buf.getvalue()
 
 
+# --------------------------------------------------------------------------- #
+#  Carte des modèles récents (L100, ...) : RealMapData_1
+# --------------------------------------------------------------------------- #
+# Ces modèles ne publient PAS RealTimeMap. Leur carte vit dans
+# RealMapData_1.MapData1..8 (à concaténer), sous forme d'un raster 2 bits
+# compressé en RLE :
+#   en-tête 8 octets : [b0][0x32][originX int16 BE][originY int16 BE][width int16 BE]
+#   corps : paires (valeur, count) ; type de cellule = valeur % 10
+#           (1 mur, 2 sol nettoyé, 3 vide/hors-carte, 0 inconnu ;
+#            les valeurs 11/12/13 = type+10, un drapeau de couche).
+def decode_realmap(state):
+    """RealMapData_1 -> liste (x, y, type) pour type in {1, 2}, sinon []."""
+    obj = (state or {}).get("RealMapData_1") or {}
+    raw = b""
+    for i in range(1, 9):
+        part = obj.get(f"MapData{i}")
+        if part:
+            try:
+                raw += base64.b64decode(part)
+            except Exception:
+                return []
+    if len(raw) < 8:
+        return []
+    width = struct.unpack(">h", raw[6:8])[0]
+    if width <= 0:
+        return []
+    body = raw[8:]
+    out = []
+    pos = 0
+    i = 0
+    end = len(body) - 1
+    while i < end:
+        t = body[i] % 10
+        cnt = body[i + 1]
+        if t in (WALL, FLOOR):
+            for k in range(cnt):
+                p = pos + k
+                out.append((p % width, p // width, t))
+        pos += cnt
+        i += 2
+    return out
+
+
+def render_realmap_png(state):
+    """Rend la carte RealMapData_1 (modèles L100...) en PNG (bytes) ou None.
+    Raster dense : on recadre sur la zone réelle et on borne la taille de cellule
+    (le raster complet fait des centaines de cellules de côté, surtout du vide)."""
+    from PIL import Image, ImageDraw
+
+    cells = decode_realmap(state)
+    if not cells:
+        return None
+    xs = [c[0] for c in cells]
+    ys = [c[1] for c in cells]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+    cols = maxx - minx + 1
+    rows = maxy - miny + 1
+    margin = 2
+    cell = max(2, min(10, 900 // max(cols, rows, 1)))
+    img = Image.new("RGBA", ((cols + 2 * margin) * cell, (rows + 2 * margin) * cell), C_BG)
+    draw = ImageDraw.Draw(img)
+    for x, y, t in cells:
+        col = C_FLOOR if t == FLOOR else C_WALL
+        cx = (x - minx + margin) * cell
+        cy = (y - miny + margin) * cell
+        draw.rectangle([cx, cy, cx + cell - 1, cy + cell - 1], fill=col)
+    # The raw raster comes out landscape; rotate 90° clockwise to match the app's
+    # portrait orientation (validated against a user's L100 app screenshot).
+    img = img.rotate(270, expand=True)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def render_png(state):
     """Rend la carte temps réel en PNG (bytes) ou None si pas de données.
     Supersampling + LANCZOS pour un rendu lisse (pas de gros pixels)."""
@@ -124,7 +199,8 @@ def render_png(state):
     rtm = (state or {}).get("RealTimeMap") or {}
     cells = decode_cells(rtm.get("MapData"))
     if not cells:
-        return None
+        # Modèles récents (L100...) : carte au format RealMapData_1.
+        return render_realmap_png(state)
 
     robot = unpack_point(rtm.get("CurrentPiont"))
     charger = unpack_point((state or {}).get("ChargerPiont"))

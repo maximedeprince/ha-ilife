@@ -35,7 +35,9 @@ class ILifeMapCamera(CoordinatorEntity, Camera):
 
     def _key(self, data):
         rtm = (data or {}).get("RealTimeMap") or {}
-        return (rtm.get("MapData"), rtm.get("CurrentPiont"), (data or {}).get("ChargerPiont"))
+        rmd = (data or {}).get("RealMapData_1") or {}
+        return (rtm.get("MapData"), rtm.get("CurrentPiont"), (data or {}).get("ChargerPiont"),
+                rmd.get("UpdateTime"), rmd.get("MapData1"))
 
     async def async_camera_image(self, width=None, height=None):
         data = self.coordinator.data or {}
