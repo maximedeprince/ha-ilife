@@ -2,6 +2,14 @@
   "config": {
     "step": {
       "user": {
+        "title": "Choose your ILIFE app",
+        "description": "Pick the app your vacuum is set up with.",
+        "menu_options": {
+          "ilifehome": "ILIFEHOME (Alibaba IoT cloud)",
+          "ilife_clean": "ILIFE Clean (Tuya cloud)"
+        }
+      },
+      "ilifehome": {
         "description": "Sign in with your ILIFE / whitelabel (e.g. AVA) account. Pick your brand and the region your account was created in.",
         "data": {
           "brand": "Brand",
@@ -10,10 +18,26 @@
           "region": "Region"
         }
       },
+      "ilife_clean": {
+        "description": "ILIFE Clean vacuums (e.g. the T20s) run on Tuya's cloud. Create a free Tuya IoT Cloud Project at iot.tuya.com (development method \"Smart Home\"), link your ILIFE Clean account to it under Devices → Link Tuya App Account, then enter the project's Access ID, Access Secret and the linked account's UID here.",
+        "data": {
+          "access_id": "Access ID (Client ID)",
+          "access_secret": "Access Secret (Client Secret)",
+          "uid": "Linked account UID",
+          "region": "Data center"
+        }
+      },
       "reauth_confirm": {
         "description": "Re-enter the password for {email}.",
         "data": {
           "password": "Password"
+        }
+      },
+      "reauth_confirm_tuya": {
+        "description": "Re-enter the Tuya Cloud Project Access ID and Access Secret.",
+        "data": {
+          "access_id": "Access ID (Client ID)",
+          "access_secret": "Access Secret (Client Secret)"
         }
       }
     },
@@ -62,6 +86,9 @@
       },
       "history": {
         "name": "History"
+      },
+      "fault": {
+        "name": "Fault"
       }
     },
     "binary_sensor": {

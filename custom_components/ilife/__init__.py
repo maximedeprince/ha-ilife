@@ -22,10 +22,24 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import ILifeAccount, ILifeAuthError, ILifeDevice, ILifeError
 from .brands import DEFAULT_BRAND
-from .const import CLEANING_MODES, CONF_BRAND, DEFAULT_START_MODE, DOMAIN
+from .const import (
+    BACKEND_ILIFE_CLEAN,
+    BACKEND_ILIFEHOME,
+    CLEANING_MODES,
+    CONF_ACCESS_ID,
+    CONF_ACCESS_SECRET,
+    CONF_BACKEND,
+    CONF_BRAND,
+    CONF_UID,
+    DEFAULT_START_MODE,
+    DOMAIN,
+)
+from .tuya_api import TuyaAuthError, TuyaClient, TuyaError, TuyaVacuum
+from .tuya_dynamic import parse_functions
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [
+
+ILIFEHOME_PLATFORMS = [
     Platform.VACUUM,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
@@ -35,6 +49,14 @@ PLATFORMS = [
     Platform.TIME,
     Platform.CAMERA,
 ]
+ILIFE_CLEAN_PLATFORMS = [
+    Platform.VACUUM,
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SELECT,
+    Platform.SWITCH,
+]
+PLATFORMS = ILIFEHOME_PLATFORMS
 
 CARD_URL = "/ilife_cards/ilife-vacuum-card.js"
 CARD_FILENAME = "ilife-vacuum-card.js"
@@ -127,7 +149,38 @@ class ILifeCoordinator(DataUpdateCoordinator):
                     pass
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+class ILifeTuyaCoordinator(DataUpdateCoordinator):
+    """Polls one ILIFE Clean (Tuya) vacuum's status: {dp_code: value}."""
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, device: TuyaVacuum) -> None:
+        super().__init__(
+            hass, _LOGGER, name=f"{DOMAIN}_{device.device_id}",
+            update_interval=timedelta(seconds=30), config_entry=entry,
+        )
+        self.api = device
+        self.online: bool | None = None
+        self.spec: dict = {}
+        self.spec_functions: dict = {}
+        self._spec_loaded = False
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        if not self._spec_loaded:
+            try:
+                self.spec = await self.hass.async_add_executor_job(self.api.specification)
+                self.spec_functions = parse_functions(self.spec)
+            except TuyaError:
+                _LOGGER.debug("ILIFE Clean specification unavailable", exc_info=True)
+                self.spec = {}
+            self._spec_loaded = True
+        try:
+            detail = await self.hass.async_add_executor_job(self.api.detail)
+        except TuyaError as err:
+            raise UpdateFailed(str(err)) from err
+        self.online = detail.get("online")
+        return {s["code"]: s.get("value") for s in detail.get("status") or [] if s.get("code")}
+
+
+async def _async_setup_ilifehome_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     account = ILifeAccount(
         entry.data[CONF_EMAIL], entry.data[CONF_PASSWORD],
         entry.data.get(CONF_REGION, "eu"),
@@ -150,15 +203,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady("no device set up")
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "account": account, "coordinators": coordinators,
+        "backend": BACKEND_ILIFEHOME, "account": account, "coordinators": coordinators,
+        "platforms": ILIFEHOME_PLATFORMS,
     }
     await _async_register_frontend(hass)
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+
+async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    client = TuyaClient(
+        entry.data[CONF_ACCESS_ID], entry.data[CONF_ACCESS_SECRET],
+        entry.data[CONF_UID], entry.data.get(CONF_REGION, "eu"),
+    )
+    try:
+        devices = await hass.async_add_executor_job(client.list_devices)
+    except TuyaAuthError as err:
+        raise ConfigEntryAuthFailed(str(err)) from err
+    except TuyaError as err:
+        raise ConfigEntryNotReady(str(err)) from err
+
+    coordinators: dict[str, ILifeTuyaCoordinator] = {}
+    for dev in devices:
+        coordinator = ILifeTuyaCoordinator(hass, entry, TuyaVacuum(client, dev))
+        await coordinator.async_refresh()
+        coordinators[dev["id"]] = coordinator
+    if not coordinators:
+        raise ConfigEntryNotReady("no device set up")
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "backend": BACKEND_ILIFE_CLEAN, "client": client, "coordinators": coordinators,
+        "platforms": ILIFE_CLEAN_PLATFORMS,
+    }
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if entry.data.get(CONF_BACKEND) == BACKEND_ILIFE_CLEAN:
+        await _async_setup_ilife_clean_entry(hass, entry)
+    else:
+        await _async_setup_ilifehome_entry(hass, entry)
+    platforms = hass.data[DOMAIN][entry.entry_id]["platforms"]
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    platforms = (hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}).get(
+        "platforms", ILIFEHOME_PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unloaded:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         # keep the '_card_*' flags; only drop DOMAIN when no entries remain
