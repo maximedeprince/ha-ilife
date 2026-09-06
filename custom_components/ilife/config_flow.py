@@ -11,12 +11,14 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, CONF_REGION
 
 from .api import REGIONS, ILifeAccount, ILifeAuthError, ILifeError
+from .brands import BRANDS, DEFAULT_BRAND
 from .const import (
     BACKEND_ILIFE_CLEAN,
     BACKEND_ILIFEHOME,
     CONF_ACCESS_ID,
     CONF_ACCESS_SECRET,
     CONF_BACKEND,
+    CONF_BRAND,
     CONF_UID,
     DOMAIN,
 )
@@ -25,9 +27,9 @@ from .tuya_api import DEFAULT_TUYA_REGION, TUYA_REGIONS, TuyaAuthError, TuyaClie
 _LOGGER = logging.getLogger(__name__)
 
 
-async def _validate_ilifehome(hass, email_addr: str, password: str, region: str) -> None:
+async def _validate(hass, email_addr: str, password: str, region: str, brand: str) -> None:
     """Raise ILifeAuthError / ILifeError if credentials are wrong / unreachable."""
-    account = ILifeAccount(email_addr, password, region)
+    account = ILifeAccount(email_addr, password, region, brand)
     await hass.async_add_executor_job(account.login)
 
 
@@ -59,9 +61,10 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             email_addr = user_input[CONF_EMAIL]
             try:
-                await _validate_ilifehome(self.hass, email_addr, user_input[CONF_PASSWORD],
-                                          user_input[CONF_REGION])
-            except ILifeAuthError:
+                await _validate(self.hass, email_addr, user_input[CONF_PASSWORD],
+                                user_input[CONF_REGION], user_input[CONF_BRAND])
+            except ILifeAuthError as err:
+                _LOGGER.warning("ILIFE authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
             except ILifeError as err:
                 _LOGGER.debug("ILIFEHOME cannot_connect: %s", err)
@@ -80,6 +83,8 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="ilifehome",
             data_schema=vol.Schema({
+                vol.Required(CONF_BRAND, default=DEFAULT_BRAND):
+                    vol.In({k: b.name for k, b in BRANDS.items()}),
                 vol.Required(CONF_EMAIL): str,
                 vol.Required(CONF_PASSWORD): str,
                 vol.Required(CONF_REGION, default="eu"): vol.In(list(REGIONS)),
@@ -138,10 +143,12 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reauth_entry()
         if user_input is not None:
             region = entry.data.get(CONF_REGION, "eu")
+            brand = entry.data.get(CONF_BRAND, DEFAULT_BRAND)
             try:
-                await _validate_ilifehome(self.hass, entry.data[CONF_EMAIL],
-                                          user_input[CONF_PASSWORD], region)
-            except ILifeAuthError:
+                await _validate(self.hass, entry.data[CONF_EMAIL],
+                                user_input[CONF_PASSWORD], region, brand)
+            except ILifeAuthError as err:
+                _LOGGER.warning("ILIFE re-authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
             except ILifeError:
                 errors["base"] = "cannot_connect"

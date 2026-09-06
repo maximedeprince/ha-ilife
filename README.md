@@ -21,6 +21,22 @@ Custom Home Assistant integration for ILIFE robot vacuums.
 > Tested with the **ILIFE V3x** on the **ILIFEHOME** app, **EU** region.
 > Other 3irobotix‑based ILIFE models likely work — **testers welcome** (see below).
 
+## Whitelabels (multi-brand)
+
+ILIFE ships several rebranded apps on the **same** Alibaba Living Link platform (same
+login handshake, endpoints and device logic) — they differ only in a small tenant
+profile. The integration supports these via **brand profiles** (`brands.py`), chosen
+in the config flow:
+
+| Brand | App / package | IoT appKey | Default region |
+|-------|---------------|-----------|----------------|
+| `ilife` | ILIFE (`com.ilife.home.global`) | 29416808 | eu |
+| `ava`   | AVA PRO MAX (`com.robot.ava`)   | 33417005 | us |
+
+Adding a brand = one entry in `brands.py` (its API-Gateway appKey/appSecret, OpenAccount
+appID/appVersion and default region) + it appears in the setup dropdown automatically.
+The AVA profile was validated end-to-end against the live us-east-1 cloud.
+
 ## Features — ILIFEHOME backend
 
 - 🧹 Full vacuum entity: start / pause / stop / return to dock / locate
@@ -32,6 +48,7 @@ Custom Home Assistant integration for ILIFE robot vacuums.
 - 🖼️ Each cleaning is archived as a tiny PNG in `www/ilife_maps/`
 - 🧩 Bundled **ILIFE Vacuum Card** — added from the UI, **responsive** (2 columns on desktop, 1 on mobile), English + French
 - 👥 Multiple vacuums and multiple accounts supported
+- 🧾 **Download diagnostics** (credentials redacted) and 🗑️ **remove old / replaced devices** from the UI
 
 ## Features — ILIFE Clean backend
 
@@ -92,7 +109,9 @@ the same one-time step used by other Tuya-based integrations (e.g.
 The code is written to be generic, so other 3irobotix‑based ILIFE vacuums have a
 good chance of working. If you own a **different model**, please try it and
 [open an issue](https://github.com/maximedeprince/ha-ilife/issues/new/choose)
-with your model and **debug logs** — that's what lets me add support.
+with your model, **debug logs** and the **diagnostics file** (see below) — that's
+what lets me add support. For a **blank or wrong map**, the diagnostics file is
+the key: it contains the raw map fields your model actually reports.
 
 ## Troubleshooting — debug logs
 
@@ -105,6 +124,20 @@ logger:
   logs:
     custom_components.ilife: debug
 ```
+
+### Diagnostics file
+
+For map or model‑specific problems, the fastest way to help is the diagnostics
+file. Go to **Settings → Devices & Services → ILIFE Vacuum → ⋮ → Download
+diagnostics** (there is also a per‑device button). It contains the raw property
+payload each vacuum reports — including the map data — with your email, password
+and device IDs **redacted**. Attach it to the issue.
+
+### Removing an old device
+
+Replaced or sold a vacuum? Once it is gone from your ILIFE account, open the
+device page → **⋮ → Delete**. Devices that are still on the account cannot be
+removed this way (they would just come back on the next refresh).
 
 ## Notes
 

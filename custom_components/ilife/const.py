@@ -1,5 +1,6 @@
 """Constants for the ILIFE integration."""
 DOMAIN = "ilife"
+CONF_BRAND = "brand"   # config-entry key: which whitelabel profile (see brands.py)
 
 # Which cloud backend a config entry talks to.
 BACKEND_ILIFEHOME = "ilifehome"
