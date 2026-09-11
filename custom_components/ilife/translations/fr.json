@@ -19,7 +19,7 @@
         }
       },
       "ilife_clean": {
-        "description": "Les aspirateurs ILIFE Clean (ex. le T20s) fonctionnent sur le cloud Tuya, pas sur ILIFEHOME. Créez un projet Cloud Tuya IoT gratuit sur iot.tuya.com (méthode de développement « Smart Home »), liez votre compte ILIFE Clean à ce projet via Devices → Link Tuya App Account, puis saisissez ici l'Access ID, l'Access Secret et l'UID du compte lié. Les étapes complètes sont dans le README.",
+        "description": "Les aspirateurs ILIFE Clean (ex. le T20s) fonctionnent sur le cloud Tuya. Créez un projet Cloud Tuya IoT gratuit sur iot.tuya.com (méthode de développement « Smart Home »), puis liez-y le compte de l'aspirateur via Devices → Link App Account. Attention : le QR code de liaison doit être scanné depuis l'application Tuya Smart / Smart Life — l'application ILIFE Clean n'a pas de scanner d'autorisation de compte, il faut donc d'abord réassocier l'aspirateur dans Tuya Smart (voir le README). Saisissez ensuite ici l'Access ID, l'Access Secret et l'UID du compte lié, en choisissant le centre de données du projet.",
         "data": {
           "access_id": "Access ID (Client ID)",
           "access_secret": "Access Secret (Client Secret)",
@@ -42,8 +42,9 @@
       }
     },
     "error": {
-      "invalid_auth": "Identifiants invalides",
-      "cannot_connect": "Échec de connexion"
+      "invalid_auth": "Identifiants invalides — la raison exacte renvoyée par le serveur se trouve dans Paramètres → Système → Journaux",
+      "cannot_connect": "Échec de la connexion — voir Paramètres → Système → Journaux pour le détail",
+      "no_devices": "Connexion réussie, mais cet UID ne possède aucun appareil. Vérifiez que l'UID est bien celui affiché sous Devices → Link App Account dans votre projet Tuya Cloud, et que l'aspirateur est associé à ce compte."
     },
     "abort": {
       "already_configured": "Ce compte est déjà configuré",

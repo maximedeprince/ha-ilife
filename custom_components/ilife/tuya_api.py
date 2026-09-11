@@ -31,21 +31,42 @@ import urllib.request
 
 _LOGGER = logging.getLogger(__name__)
 
-# Tuya Cloud data-center endpoints (developer.tuya.com / tuya-home-assistant wiki).
-# Accounts registered outside these are routed to the Western America DC by Tuya itself.
+# Tuya Cloud data-center endpoints (developer.tuya.com data-center reference). All six
+# must be offered: a Cloud Project can only be reached on the data center it was created
+# in, and Tuya routes several countries (France among them) to either European DC, so
+# omitting Western Europe / Eastern America made those projects simply unreachable.
+# Keys "eu"/"us"/"cn"/"in" are kept as-is so existing config entries keep working.
 TUYA_REGIONS = {
-    "eu": "openapi.tuyaeu.com",
-    "us": "openapi.tuyaus.com",
-    "cn": "openapi.tuyacn.com",
-    "in": "openapi.tuyain.com",
+    "eu": "openapi.tuyaeu.com",          # Central Europe
+    "weu": "openapi-weaz.tuyaeu.com",    # Western Europe
+    "us": "openapi.tuyaus.com",          # Western America
+    "eus": "openapi-ueaz.tuyaus.com",    # Eastern America
+    "cn": "openapi.tuyacn.com",          # China
+    "in": "openapi.tuyain.com",          # India
 }
+
+# Shown in the config flow — the raw keys mean nothing to a user picking a data center
+# from the Tuya console, which names them in full.
+TUYA_REGION_LABELS = {
+    "eu": "Central Europe",
+    "weu": "Western Europe",
+    "us": "Western America",
+    "eus": "Eastern America",
+    "cn": "China",
+    "in": "India",
+}
+
 DEFAULT_TUYA_REGION = "eu"
 
 TOKEN_TTL_SAFETY = 60  # seconds; refresh this long before actual expiry
 
 
 class TuyaError(Exception):
-    """Generic Tuya API error."""
+    """Generic Tuya API error, carrying the Tuya error code when the server sent one."""
+
+    def __init__(self, message: str, code: int | str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class TuyaAuthError(TuyaError):
@@ -56,8 +77,49 @@ class TuyaTokenExpiredError(TuyaAuthError):
     """Access token expired/invalid (code 1010) — caller should refresh and retry."""
 
 
+class TuyaNoDevicesError(TuyaError):
+    """Project credentials are valid but the UID owns no devices (wrong/unlinked UID)."""
+
+
 class TuyaOfflineError(TuyaError):
     """Device reports offline — command not delivered."""
+
+
+# Tuya OpenAPI codes that mean "the Cloud Project/UID setup is wrong", not "try again
+# later" — these must surface as an authentication problem so the user fixes the setup
+# instead of waiting for a retry that can never succeed.
+_AUTH_CODES = {1004, 1005, 1010, 1106, 2406, 28841002, 28841101, 28841105}
+
+# The setup mistakes users actually hit (see issues #3 and #13): a bare "Tuya API error
+# (1106): permission deny" tells nobody anything, so each known code gets the fix.
+_CODE_HINTS: dict[int, str] = {
+    1004: "signature rejected — check the Access Secret was pasted in full (no stray "
+          "spaces), and that the Home Assistant host clock is correct",
+    1005: "unknown Access ID — check the Access ID (Client ID) of your Tuya Cloud Project",
+    1010: "access token rejected",
+    1106: "permission denied — usually the data center selected here does not match the "
+          "one your Tuya Cloud Project was created in, or the project is missing its "
+          "IoT Core / Smart Home Basic Service API subscription",
+    2406: "the Cloud Project is not authorized in this data center — pick the data center "
+          "the project was created in, or add this one to the project on iot.tuya.com",
+    28841002: "access token expired",
+    28841101: "the Cloud Project is missing an API subscription (IoT Core / Smart Home "
+              "Basic Service) — subscribe to it on iot.tuya.com, it is free",
+    28841105: "the Cloud Project is missing an API subscription (IoT Core / Smart Home "
+              "Basic Service) — subscribe to it on iot.tuya.com, it is free",
+}
+
+
+def _api_error(code, msg: str, path: str, *, force_auth: bool = False) -> TuyaError:
+    """Build the richest error we can for a failed Tuya call, and log it."""
+    text = f"Tuya API error {code} on {path}: {msg}"
+    hint = _CODE_HINTS.get(code)
+    if hint:
+        text += f" — {hint}"
+    _LOGGER.debug("Tuya call failed: %s", text)
+    if force_auth or code in _AUTH_CODES:
+        return TuyaAuthError(text, code)
+    return TuyaError(text, code)
 
 
 def _headers(method, path, body_bytes, access_id, access_secret, token=""):
@@ -123,7 +185,7 @@ class TuyaClient:
                 self._token = None
                 self.authenticate()
                 return self._call(method, path, body, _retry=False)
-            raise TuyaError(f"Tuya API error ({code}): {msg}")
+            raise _api_error(code, msg, path)
         return r.get("result")
 
     # --- auth ---
@@ -136,7 +198,9 @@ class TuyaClient:
                            self.access_id, self.access_secret, "")
         r = _do(self.host, "GET", "/v1.0/token?grant_type=1", headers, None)
         if r.get("success") is not True:
-            raise TuyaAuthError(f"Tuya token request failed ({r.get('code')}): {r.get('msg')}")
+            # A failed token request is always a project-credentials/data-center problem.
+            raise _api_error(r.get("code"), r.get("msg") or "unknown error",
+                             "/v1.0/token", force_auth=True)
         result = r.get("result") or {}
         self._token = result.get("access_token")
         expire_in = result.get("expire_time") or 7200
@@ -152,7 +216,7 @@ class TuyaClient:
                                 "Tuya Cloud Project first (see README)")
         devices = self._call("GET", f"/v1.0/users/{urllib.parse.quote(self.uid)}/devices")
         if not devices:
-            raise TuyaError(
+            raise TuyaNoDevicesError(
                 "no devices found for this UID — check that the UID is correct and the "
                 "ILIFE Clean account has been linked to this Cloud Project (see README)")
         return devices

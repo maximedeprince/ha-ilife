@@ -19,7 +19,7 @@
         }
       },
       "ilife_clean": {
-        "description": "ILIFE Clean vacuums (e.g. the T20s) run on Tuya's cloud. Create a free Tuya IoT Cloud Project at iot.tuya.com (development method \"Smart Home\"), link your ILIFE Clean account to it under Devices → Link Tuya App Account, then enter the project's Access ID, Access Secret and the linked account's UID here.",
+        "description": "ILIFE Clean vacuums (e.g. the T20s) run on Tuya's cloud. Create a free Tuya IoT Cloud Project at iot.tuya.com (development method \"Smart Home\"), then link your vacuum's account to it under Devices → Link App Account. Note: the linking QR code must be scanned from the Tuya Smart / Smart Life app — the ILIFE Clean app has no account-authorization scanner, so the vacuum has to be re-paired in Tuya Smart first (see the README). Then enter the project's Access ID, Access Secret and the linked account's UID here, picking the data center the project was created in.",
         "data": {
           "access_id": "Access ID (Client ID)",
           "access_secret": "Access Secret (Client Secret)",
@@ -42,8 +42,9 @@
       }
     },
     "error": {
-      "invalid_auth": "Invalid credentials",
-      "cannot_connect": "Failed to connect"
+      "invalid_auth": "Invalid credentials — see Settings → System → Logs for the exact reason reported by the server",
+      "cannot_connect": "Failed to connect — see Settings → System → Logs for details",
+      "no_devices": "Connected, but this UID owns no devices. Check the UID is the one shown under Devices → Link App Account in your Tuya Cloud Project, and that the vacuum is paired to that account."
     },
     "abort": {
       "already_configured": "This account is already configured",
