@@ -123,8 +123,12 @@ the same one-time step used by other Tuya-based integrations (e.g.
 
 > **If setup fails**, the integration now logs the exact reason Tuya gave.
 > Check **Settings → System → Logs** for a `custom_components.ilife` line — it
-> names the error code and what to fix. The most common one is a **data center
-> mismatch** between the Cloud Project and the one selected in Home Assistant.
+> names the error code and what to fix. Two causes cover most failures:
+> a **data center mismatch** between the Cloud Project and the one selected in
+> Home Assistant, and an **out-of-sync host clock** (error `1013`, *"request
+> time is invalid"*) — Tuya signs every request with the current time and
+> allows only a few minutes of drift, so the log line tells you exactly how far
+> off your Home Assistant host is and you fix it with NTP on the host.
 
 > **Already using the official Tuya integration?** That's fine — the two can
 > share the same devices. A Tuya account can be linked to several Cloud

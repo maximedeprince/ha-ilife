@@ -88,7 +88,7 @@ class TuyaOfflineError(TuyaError):
 # Tuya OpenAPI codes that mean "the Cloud Project/UID setup is wrong", not "try again
 # later" — these must surface as an authentication problem so the user fixes the setup
 # instead of waiting for a retry that can never succeed.
-_AUTH_CODES = {1004, 1005, 1010, 1106, 2406, 28841002, 28841101, 28841105}
+_AUTH_CODES = {1004, 1005, 1010, 1013, 1106, 2406, 28841002, 28841101, 28841105}
 
 # The setup mistakes users actually hit (see issues #3 and #13): a bare "Tuya API error
 # (1106): permission deny" tells nobody anything, so each known code gets the fix.
@@ -97,6 +97,9 @@ _CODE_HINTS: dict[int, str] = {
           "spaces), and that the Home Assistant host clock is correct",
     1005: "unknown Access ID — check the Access ID (Client ID) of your Tuya Cloud Project",
     1010: "access token rejected",
+    1013: "the request timestamp was rejected — the Home Assistant host clock is out of "
+          "sync (Tuya signs every request with the current time and allows only a few "
+          "minutes of drift). Fix time synchronisation (NTP) on the host",
     1106: "permission denied — usually the data center selected here does not match the "
           "one your Tuya Cloud Project was created in, or the project is missing its "
           "IoT Core / Smart Home Basic Service API subscription",
@@ -110,12 +113,48 @@ _CODE_HINTS: dict[int, str] = {
 }
 
 
-def _api_error(code, msg: str, path: str, *, force_auth: bool = False) -> TuyaError:
+def _format_skew(seconds: float) -> str:
+    """Human-readable clock offset — minutes matter more than seconds at this scale."""
+    seconds = abs(seconds)
+    if seconds < 120:
+        return f"{seconds:.0f} seconds"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 120:
+        return f"{minutes} min {secs} s"
+    return f"{minutes // 60} h {minutes % 60} min"
+
+
+def _clock_skew_note(server_t) -> str:
+    """Tuya stamps every response — errors included — with its own clock in `t`, so a
+    request rejected for a bad timestamp can name the actual offset rather than leaving
+    the user guessing. Round-trip latency is milliseconds, so anything above a few
+    seconds is genuine host drift.
+
+    The offset is reported, never silently applied to the signature: a host clock this
+    far off also breaks Home Assistant's own scheduling, history and recorder, so the
+    fix belongs on the host, not hidden in here.
+    """
+    try:
+        skew = time.time() - float(server_t) / 1000.0
+    except (TypeError, ValueError):
+        return ""
+    if abs(skew) < 5:
+        return ""
+    direction = "ahead of" if skew > 0 else "behind"
+    return (f"Measured against Tuya's own clock, this Home Assistant host is "
+            f"{_format_skew(skew)} {direction} the server.")
+
+
+def _api_error(code, msg: str, path: str, *, server_t=None,
+               force_auth: bool = False) -> TuyaError:
     """Build the richest error we can for a failed Tuya call, and log it."""
     text = f"Tuya API error {code} on {path}: {msg}"
     hint = _CODE_HINTS.get(code)
     if hint:
         text += f" — {hint}"
+    note = _clock_skew_note(server_t)
+    if note:
+        text += f". {note}"
     _LOGGER.debug("Tuya call failed: %s", text)
     if force_auth or code in _AUTH_CODES:
         return TuyaAuthError(text, code)
@@ -185,7 +224,7 @@ class TuyaClient:
                 self._token = None
                 self.authenticate()
                 return self._call(method, path, body, _retry=False)
-            raise _api_error(code, msg, path)
+            raise _api_error(code, msg, path, server_t=r.get("t"))
         return r.get("result")
 
     # --- auth ---
@@ -200,7 +239,7 @@ class TuyaClient:
         if r.get("success") is not True:
             # A failed token request is always a project-credentials/data-center problem.
             raise _api_error(r.get("code"), r.get("msg") or "unknown error",
-                             "/v1.0/token", force_auth=True)
+                             "/v1.0/token", server_t=r.get("t"), force_auth=True)
         result = r.get("result") or {}
         self._token = result.get("access_token")
         expire_in = result.get("expire_time") or 7200
