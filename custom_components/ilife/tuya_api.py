@@ -105,7 +105,13 @@ _CODE_HINTS: dict[int, str] = {
           "IoT Core / Smart Home Basic Service API subscription",
     2406: "the Cloud Project is not authorized in this data center — pick the data center "
           "the project was created in, or add this one to the project on iot.tuya.com",
-    28841002: "access token expired",
+    # Tuya returns this for an expired Cloud Project trial as well as for a rejected
+    # token, and its own message says which — so the hint must not contradict it.
+    28841002: "the Cloud Project's free trial has expired, or the token was rejected. "
+              "Tuya's Trial Edition is time-limited but renewable at no cost: on "
+              "iot.tuya.com go to Cloud \u2192 Cloud Services \u2192 IoT Core, renew the "
+              "trial, then re-authorize it for your project under the project's Service "
+              "API tab",
     28841101: "the Cloud Project is missing an API subscription (IoT Core / Smart Home "
               "Basic Service) — subscribe to it on iot.tuya.com, it is free",
     28841105: "the Cloud Project is missing an API subscription (IoT Core / Smart Home "
