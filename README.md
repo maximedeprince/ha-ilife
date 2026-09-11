@@ -96,13 +96,37 @@ the same one-time step used by other Tuya-based integrations (e.g.
    creation, free tier).
 3. On the project's **Overview** tab, copy the **Access ID (Client ID)** and
    **Access Secret (Client Secret)**.
-4. Go to the project's **Devices** tab → **Link Tuya App Account** → **Add
-   App Account**, scan the QR code from inside the **ILIFE Clean** app (its
-   own QR/account-link scanner, usually under the profile/settings menu), and
-   confirm. Once linked, copy the **UID** shown there.
-5. In Home Assistant: **Settings → Devices & Services → Add Integration →
+4. **Move the vacuum to the Tuya Smart app.** The ILIFE Clean app has no
+   account-authorization scanner — only the device-pairing one on its splash
+   screen, which rejects the linking QR code ("QR code expired"). So install
+   [**Tuya Smart**](https://play.google.com/store/apps/details?id=com.tuya.smart)
+   (or **Smart Life**), sign in with a Tuya account in the same region as your
+   Cloud Project, **remove the vacuum from ILIFE Clean** (a Tuya device belongs
+   to one account at a time) and add it in Tuya Smart instead.
+
+   If pairing stalls at "connecting to network": use **2.4 GHz Wi-Fi only**
+   (split the bands if your router merges them), grant the app **Location** and
+   **local network** permissions, and pick **AP / hotspot mode** ("Other mode")
+   rather than the default EZ mode — slower, far more reliable.
+5. Go to the project's **Devices** tab → **Link App Account** → **Add App
+   Account**, and scan the QR code **from inside Tuya Smart** (home screen ⊕ →
+   **Scan**, or **Me →** scan icon). Once linked, copy the **UID** shown in
+   that list.
+6. In Home Assistant: **Settings → Devices & Services → Add Integration →
    ILIFE Vacuum → ILIFE Clean**, and enter the Access ID, Access Secret, UID
-   and data center from steps 3–4.
+   and data center from steps 3–5.
+
+> **If setup fails**, the integration now logs the exact reason Tuya gave.
+> Check **Settings → System → Logs** for a `custom_components.ilife` line — it
+> names the error code and what to fix. The most common one is a **data center
+> mismatch** between the Cloud Project and your account's region (for France,
+> try **Central Europe**, then **Western Europe**).
+
+> **Already using the official Tuya integration?** That's fine — the two can
+> share the same devices. A Tuya account can be linked to several Cloud
+> Projects, and each integration talks to its own. You will simply see the
+> vacuum twice in Home Assistant; disable whichever set of entities you don't
+> want.
 
 ## 🙏 Help wanted — testers for other ILIFE models
 

@@ -22,7 +22,14 @@ from .const import (
     CONF_UID,
     DOMAIN,
 )
-from .tuya_api import DEFAULT_TUYA_REGION, TUYA_REGIONS, TuyaAuthError, TuyaClient, TuyaError
+from .tuya_api import (
+    DEFAULT_TUYA_REGION,
+    TUYA_REGIONS,
+    TuyaAuthError,
+    TuyaClient,
+    TuyaError,
+    TuyaNoDevicesError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,7 +42,8 @@ async def _validate(hass, email_addr: str, password: str, region: str, brand: st
 
 async def _validate_ilife_clean(hass, access_id: str, access_secret: str, uid: str,
                                 region: str) -> None:
-    """Raise TuyaAuthError / TuyaError if the Cloud Project credentials/UID are wrong."""
+    """Raise TuyaAuthError / TuyaNoDevicesError / TuyaError if the Cloud Project
+    credentials are wrong, the UID owns nothing, or Tuya is unreachable."""
     client = TuyaClient(access_id, access_secret, uid, region)
     await hass.async_add_executor_job(client.list_devices)
 
@@ -102,10 +110,14 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
                 await _validate_ilife_clean(
                     self.hass, user_input[CONF_ACCESS_ID], user_input[CONF_ACCESS_SECRET],
                     user_input[CONF_UID], user_input[CONF_REGION])
-            except TuyaAuthError:
+            except TuyaNoDevicesError as err:
+                _LOGGER.warning("ILIFE Clean setup: %s", err)
+                errors["base"] = "no_devices"
+            except TuyaAuthError as err:
+                _LOGGER.warning("ILIFE Clean authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
             except TuyaError as err:
-                _LOGGER.debug("ILIFE Clean cannot_connect: %s", err)
+                _LOGGER.warning("ILIFE Clean cannot_connect: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected ILIFE Clean login error")
@@ -174,9 +186,14 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
                 await _validate_ilife_clean(
                     self.hass, user_input[CONF_ACCESS_ID], user_input[CONF_ACCESS_SECRET],
                     entry.data[CONF_UID], region)
-            except TuyaAuthError:
+            except TuyaNoDevicesError as err:
+                _LOGGER.warning("ILIFE Clean re-auth: %s", err)
+                errors["base"] = "no_devices"
+            except TuyaAuthError as err:
+                _LOGGER.warning("ILIFE Clean re-authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
-            except TuyaError:
+            except TuyaError as err:
+                _LOGGER.warning("ILIFE Clean re-auth cannot_connect: %s", err)
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_update_reload_and_abort(
