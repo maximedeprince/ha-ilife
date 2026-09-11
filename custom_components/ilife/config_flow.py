@@ -24,7 +24,7 @@ from .const import (
 )
 from .tuya_api import (
     DEFAULT_TUYA_REGION,
-    TUYA_REGIONS,
+    TUYA_REGION_LABELS,
     TuyaAuthError,
     TuyaClient,
     TuyaError,
@@ -136,7 +136,7 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_ACCESS_ID): str,
                 vol.Required(CONF_ACCESS_SECRET): str,
                 vol.Required(CONF_UID): str,
-                vol.Required(CONF_REGION, default=DEFAULT_TUYA_REGION): vol.In(list(TUYA_REGIONS)),
+                vol.Required(CONF_REGION, default=DEFAULT_TUYA_REGION): vol.In(TUYA_REGION_LABELS),
             }),
             errors=errors,
         )

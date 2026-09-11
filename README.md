@@ -89,8 +89,13 @@ the same one-time step used by other Tuya-based integrations (e.g.
 
 1. Create a free account at [iot.tuya.com](https://iot.tuya.com) and go to
    **Cloud → Development → Create Cloud Project**. Development method:
-   **Smart Home**. Pick the data center matching your account's region
-   (Central Europe, Western America, India or China).
+   **Smart Home**. Pick the data center matching your account's region — all
+   six Tuya data centers are supported (Central Europe, Western Europe,
+   Western America, Eastern America, China, India). **Note the one you
+   picked**: a Cloud Project is only reachable on its own data center, and
+   choosing the wrong one here is the most common cause of setup failing.
+   Several countries (France among them) can be on *either* European data
+   center, so if Central Europe fails, try Western Europe.
 2. Subscribe the project to the **IoT Core** / **Authorization** / **Smart
    Home Basic Service** API groups (Tuya prompts for this during project
    creation, free tier).
@@ -119,8 +124,7 @@ the same one-time step used by other Tuya-based integrations (e.g.
 > **If setup fails**, the integration now logs the exact reason Tuya gave.
 > Check **Settings → System → Logs** for a `custom_components.ilife` line — it
 > names the error code and what to fix. The most common one is a **data center
-> mismatch** between the Cloud Project and your account's region (for France,
-> try **Central Europe**, then **Western Europe**).
+> mismatch** between the Cloud Project and the one selected in Home Assistant.
 
 > **Already using the official Tuya integration?** That's fine — the two can
 > share the same devices. A Tuya account can be linked to several Cloud

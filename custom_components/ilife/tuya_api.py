@@ -31,14 +31,31 @@ import urllib.request
 
 _LOGGER = logging.getLogger(__name__)
 
-# Tuya Cloud data-center endpoints (developer.tuya.com / tuya-home-assistant wiki).
-# Accounts registered outside these are routed to the Western America DC by Tuya itself.
+# Tuya Cloud data-center endpoints (developer.tuya.com data-center reference). All six
+# must be offered: a Cloud Project can only be reached on the data center it was created
+# in, and Tuya routes several countries (France among them) to either European DC, so
+# omitting Western Europe / Eastern America made those projects simply unreachable.
+# Keys "eu"/"us"/"cn"/"in" are kept as-is so existing config entries keep working.
 TUYA_REGIONS = {
-    "eu": "openapi.tuyaeu.com",
-    "us": "openapi.tuyaus.com",
-    "cn": "openapi.tuyacn.com",
-    "in": "openapi.tuyain.com",
+    "eu": "openapi.tuyaeu.com",          # Central Europe
+    "weu": "openapi-weaz.tuyaeu.com",    # Western Europe
+    "us": "openapi.tuyaus.com",          # Western America
+    "eus": "openapi-ueaz.tuyaus.com",    # Eastern America
+    "cn": "openapi.tuyacn.com",          # China
+    "in": "openapi.tuyain.com",          # India
 }
+
+# Shown in the config flow — the raw keys mean nothing to a user picking a data center
+# from the Tuya console, which names them in full.
+TUYA_REGION_LABELS = {
+    "eu": "Central Europe",
+    "weu": "Western Europe",
+    "us": "Western America",
+    "eus": "Eastern America",
+    "cn": "China",
+    "in": "India",
+}
+
 DEFAULT_TUYA_REGION = "eu"
 
 TOKEN_TTL_SAFETY = 60  # seconds; refresh this long before actual expiry
