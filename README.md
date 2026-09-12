@@ -109,10 +109,9 @@ the same one-time step used by other Tuya-based integrations (e.g.
    Cloud Project, **remove the vacuum from ILIFE Clean** (a Tuya device belongs
    to one account at a time) and add it in Tuya Smart instead.
 
-   If pairing stalls at "connecting to network": use **2.4 GHz Wi-Fi only**
-   (split the bands if your router merges them), grant the app **Location** and
-   **local network** permissions, and pick **AP / hotspot mode** ("Other mode")
-   rather than the default EZ mode — slower, far more reliable.
+   If pairing stalls at *"connecting to router"*, see
+   [Pairing the vacuum in Tuya Smart](#pairing-the-vacuum-in-tuya-smart) below —
+   that step trips up most people and the fix is on the Wi-Fi side.
 5. Go to the project's **Devices** tab → **Link App Account** → **Add App
    Account**, and scan the QR code **from inside Tuya Smart** (home screen ⊕ →
    **Scan**, or **Me →** scan icon). Once linked, copy the **UID** shown in
@@ -144,6 +143,52 @@ the same one-time step used by other Tuya-based integrations (e.g.
 > Projects, and each integration talks to its own. You will simply see the
 > vacuum twice in Home Assistant; disable whichever set of entities you don't
 > want.
+
+### Pairing the vacuum in Tuya Smart
+
+Step 4 is where most setups get stuck, and the failure always looks the same:
+the app sits on *"connecting to router"* until it times out. That message means
+the robot never joined your Wi-Fi at all — so the fix is on the Wi-Fi side, not
+in Home Assistant.
+
+**Read the LED first.** It tells you which pairing mode the robot is actually
+in:
+
+| LED | Mode | How it works |
+| --- | --- | --- |
+| fast blink, ~2×/second | **EZ / SmartConfig** | the phone broadcasts your Wi-Fi credentials over UDP and hopes the robot hears them — silently defeated by mesh backhaul, AP isolation or multicast filtering |
+| slow blink, ~1 every 2–3 s | **AP / hotspot** | the robot raises a `SmartLife-XXXX` hotspot, your phone joins it and hands the credentials over directly — no broadcast, far more reliable |
+
+**Selecting "AP mode" in Tuya Smart does not switch the robot.** You have to put
+the robot into it yourself: reset it once (LED blinks fast), then hold the same
+button again until the blink visibly *slows down*. Only then, in Tuya Smart, use
+**Add device →** pick the robot vacuum manually **→ "Other mode" / AP Mode**,
+and join `SmartLife-XXXX` from your phone's Wi-Fi settings when prompted.
+
+On Android, also **turn mobile data off** while pairing in AP mode — the robot's
+hotspot has no internet and the phone will quietly switch away from it — and
+grant Tuya Smart the **Location** and **Nearby devices** permissions.
+
+**If AP mode stalls too, the router is refusing the robot.** Tuya Wi-Fi modules
+are picky in ways that stay invisible unless you go looking:
+
+- **WPA3, or WPA2/WPA3 mixed mode** — they only speak WPA/WPA2-PSK. Set the
+  2.4 GHz SSID to **WPA2-PSK (AES)** for pairing. Likewise **PMF / 802.11w**
+  must be *optional* or *disabled*, never *required*.
+- **Channel** — pin the 2.4 GHz channel to **1, 6 or 11**. Tuya modules
+  frequently ignore channels 12–13, which European routers pick on "auto".
+- **2.4 GHz only** — split the bands if your router merges them under one SSID,
+  and keep the phone on that same network.
+- **AP/client isolation off**, and pair against the main SSID, not a guest
+  network.
+- **Plain ASCII SSID and password**, no spaces or special characters, and the
+  SSID not hidden.
+
+**One diagnostic worth doing:** watch your router's DHCP client list during a
+pairing attempt. If the robot appears there even briefly, it *did* associate and
+the problem is on the way out to Tuya's cloud (DNS filtering, IoT VLAN,
+firewall) — a different fix entirely. If it never appears, it never associated,
+and the list above is where to look.
 
 ## 🙏 Help wanted — testers for other ILIFE models
 
