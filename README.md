@@ -37,6 +37,13 @@ Adding a brand = one entry in `brands.py` (its API-Gateway appKey/appSecret, Ope
 appID/appVersion and default region) + it appears in the setup dropdown automatically.
 The AVA profile was validated end-to-end against the live us-east-1 cloud.
 
+All of those fields except the **appSecret** are sent in the clear and can be read off a
+single captured request. The appSecret is not in the APK — Alibaba's SecurityGuard native
+library holds it — so it has to be lifted from the running app.
+**[How to recover a whitelabel's app secret](docs/whitelabel-appsecret-extraction.md)** is
+the full recipe: a Frida signing oracle, a memory sweep and offline HMAC validation. Bring
+back the four fields and the brand ships.
+
 ## Features — ILIFEHOME backend
 
 - 🧹 Full vacuum entity: start / pause / stop / return to dock / locate
