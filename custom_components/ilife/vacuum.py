@@ -24,6 +24,7 @@ from .const import (
     TUYA_DP_RETURN_HOME,
     TUYA_DP_STATUS,
     TUYA_DP_SWITCH,
+    TUYA_STATUS_CLEANING,
     TUYA_STATUS_DOCKED,
     TUYA_STATUS_IDLE,
     TUYA_STATUS_PAUSED,
@@ -160,10 +161,16 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
                 return VacuumActivity.PAUSED
             if s in TUYA_STATUS_IDLE:
                 return VacuumActivity.IDLE
-            return VacuumActivity.CLEANING
+            if s in TUYA_STATUS_CLEANING:
+                return VacuumActivity.CLEANING
+            # An unrecognised status used to mean "cleaning", which reported a docked
+            # vacuum as cleaning for good. Charging is the value models rename most, so
+            # try that, then believe the run flags over a guess.
+            if "charg" in s or "dock" in s:
+                return VacuumActivity.DOCKED
         if data.get(TUYA_DP_PAUSE) is True:
             return VacuumActivity.PAUSED
-        if data.get(TUYA_DP_SWITCH) is True:
+        if data.get(TUYA_DP_POWER_GO) is True or data.get(TUYA_DP_SWITCH) is True:
             return VacuumActivity.CLEANING
         return VacuumActivity.IDLE
 
