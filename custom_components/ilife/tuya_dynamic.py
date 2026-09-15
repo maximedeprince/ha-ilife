@@ -49,3 +49,14 @@ def unknown_status_values(spec: dict, status: dict) -> list[str]:
             continue  # handled by switch.py / select.py
         out.append(code)
     return out
+
+
+def status_types(spec: dict) -> dict[str, str]:
+    """{code: Tuya type} for every DP the device reports in its status block. Unlike
+    parse_functions() this also covers read-only DPs (Raw blobs, Bitmaps, counters),
+    which is what we need to know how to present a generic sensor."""
+    return {
+        s["code"]: s.get("type")
+        for s in (spec or {}).get("status") or []
+        if s.get("code")
+    }
