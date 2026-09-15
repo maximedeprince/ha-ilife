@@ -5,6 +5,7 @@ sensor for any other status DP the device reports that isn't already a switch/se
 """
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 
 from homeassistant.components.sensor import (
@@ -12,7 +13,13 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfArea, UnitOfTime
+from homeassistant.const import (
+    MAX_LENGTH_STATE_STATE,
+    PERCENTAGE,
+    UnitOfArea,
+    UnitOfInformation,
+    UnitOfTime,
+)
 
 from .api import clean_area_m2
 from .const import (
@@ -25,7 +32,7 @@ from .const import (
     TUYA_DP_FAULT,
 )
 from .entity import ILifeEntity
-from .tuya_dynamic import unknown_status_values
+from .tuya_dynamic import status_types, unknown_status_values
 from .tuya_entity import TuyaEntity
 
 
@@ -103,8 +110,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
             if TUYA_DP_FAULT in status:
                 entities.append(TuyaSensor(coordinator, "fault", "mdi:alert-circle-outline",
                                            None, None, TUYA_DP_FAULT, None))
+            dp_types = status_types(coordinator.spec)
             for code in unknown_status_values(coordinator.spec, status):
-                entities.append(TuyaGenericSensor(coordinator, code))
+                entities.append(
+                    TuyaGenericSensor(coordinator, code, dp_types.get(code)))
     else:
         for coordinator in data["coordinators"].values():
             entities += [ILifeSensor(coordinator, *s) for s in SENSORS]
@@ -170,20 +179,65 @@ class TuyaSensor(TuyaEntity, SensorEntity):
         return (self.coordinator.data or {}).get(self._code)
 
 
+def _b64_size(value):
+    """Decoded size in bytes of a Tuya Raw DP, or None if it carries nothing."""
+    if not value:
+        return 0 if value == "" else None
+    try:
+        return len(base64.b64decode(value, validate=True))
+    except (ValueError, TypeError):
+        return None
+
+
 class TuyaGenericSensor(TuyaEntity, SensorEntity):
     """Any other status DP the device reports that isn't a switch/select (e.g. a
     consumable-life counter or self-empty status) under whatever code name this unit
-    actually uses for it."""
+    actually uses for it.
+
+    A "Raw" DP (path_data, command_trans, voice_data...) carries a base64 blob that can
+    run to kilobytes, which is far past what a state can hold, so those report the
+    decoded payload size instead and keep the blob in an attribute.
+    """
 
     _attr_icon = "mdi:information-outline"
+    # a Raw blob has no business in the recorder database
+    _unrecorded_attributes = frozenset({"value"})
 
-    def __init__(self, coordinator, code):
+    def __init__(self, coordinator, code, dp_type=None):
         super().__init__(coordinator)
         self._code = code
+        self._dp_type = dp_type
         self._attr_name = code.replace("_", " ").title()
         self._attr_unique_id = f"{self.api.device_id}_{code}"
+        if dp_type == "Raw":
+            self._attr_device_class = SensorDeviceClass.DATA_SIZE
+            self._attr_native_unit_of_measurement = UnitOfInformation.BYTES
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def _raw(self):
+        return (self.coordinator.data or {}).get(self._code)
 
     @property
     def native_value(self):
-        v = (self.coordinator.data or {}).get(self._code)
-        return v if isinstance(v, (str, int, float)) else str(v) if v is not None else None
+        v = self._raw
+        if self._dp_type == "Raw":
+            return _b64_size(v)
+        if v is None:
+            return None
+        if not isinstance(v, (str, int, float)):
+            v = str(v)
+        # a state longer than 255 chars is rejected outright and the entity goes
+        # unavailable, so truncate and keep the whole value in the attribute
+        if isinstance(v, str) and len(v) > MAX_LENGTH_STATE_STATE:
+            return v[:MAX_LENGTH_STATE_STATE - 1] + "\u2026"
+        return v
+
+    @property
+    def extra_state_attributes(self):
+        v = self._raw
+        if self._dp_type == "Raw":
+            return {"value": v}
+        if isinstance(v, str) and len(v) > MAX_LENGTH_STATE_STATE:
+            return {"value": v}
+        return None
