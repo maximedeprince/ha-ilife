@@ -54,6 +54,12 @@
   "exceptions": {
     "device_offline": {
       "message": "L'aspirateur est en veille sur sa base et injoignable côté cloud pour le moment. Il se réveille automatiquement pour les nettoyages programmés ; les commandes à la demande ne fonctionnent que lorsqu'il est réveillé."
+    },
+    "command_unsupported": {
+      "message": "{device} n'annonce aucun point de donnée pour « {action} » : il n'y a donc aucune commande à lui envoyer. Si l'application officielle sait le faire, ouvrez une issue en joignant les diagnostics de l'intégration."
+    },
+    "fan_speed_unsupported": {
+      "message": "« {fan_speed} » n'est pas une puissance d'aspiration acceptée par cet aspirateur. Valeurs possibles : {options}."
     }
   },
   "entity": {

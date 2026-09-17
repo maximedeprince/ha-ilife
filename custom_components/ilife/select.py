@@ -14,6 +14,7 @@ from .const import (
     CLEAN_MODES,
     CLEANING_MODES,
     DOMAIN,
+    TUYA_DP_CISTERN,
     TUYA_DP_MODE,
     WATER_LEVELS,
     clean_mode_label,
@@ -22,7 +23,7 @@ from .const import (
 )
 from .entity import ILifeEntity
 from .tuya_api import TuyaError, TuyaOfflineError
-from .tuya_dynamic import unknown_functions
+from .tuya_dynamic import range_values, unknown_functions
 from .tuya_entity import TuyaEntity
 
 
@@ -34,6 +35,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
             functions = coordinator.spec_functions
             if TUYA_DP_MODE in functions:
                 entities.append(TuyaModeSelect(coordinator))
+            if TUYA_DP_CISTERN in functions:
+                entities.append(TuyaWaterSelect(coordinator))
             for code, meta in unknown_functions(
                 coordinator.spec, coordinator.data or {}, "Enum").items():
                 entities.append(TuyaGenericSelect(coordinator, code, meta))
@@ -116,9 +119,7 @@ class TuyaModeSelect(_TuyaSelectBase):
         super().__init__(coordinator)
         self._attr_unique_id = f"{self.api.device_id}_mode"
         self._attr_options = [
-            str(v) for v in
-            ((coordinator.spec_functions.get(TUYA_DP_MODE) or {}).get("values") or {}).get(
-                "range") or []
+            str(v) for v in range_values(coordinator.spec_functions, TUYA_DP_MODE)
         ]
 
     @property
@@ -128,6 +129,29 @@ class TuyaModeSelect(_TuyaSelectBase):
 
     async def async_select_option(self, option):
         await self._send(TUYA_DP_MODE, option)
+
+
+class TuyaWaterSelect(_TuyaSelectBase):
+    """Water flow (`cistern`). Same DP the generic select used to expose namelessly —
+    the unique_id is kept so the existing entity is renamed, not duplicated."""
+
+    _attr_translation_key = "water_level"
+    _attr_icon = "mdi:water"
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{self.api.device_id}_{TUYA_DP_CISTERN}"
+        self._attr_options = [
+            str(v) for v in range_values(coordinator.spec_functions, TUYA_DP_CISTERN)
+        ]
+
+    @property
+    def current_option(self):
+        v = (self.coordinator.data or {}).get(TUYA_DP_CISTERN)
+        return str(v) if v is not None else None
+
+    async def async_select_option(self, option):
+        await self._send(TUYA_DP_CISTERN, option)
 
 
 class TuyaGenericSelect(_TuyaSelectBase):

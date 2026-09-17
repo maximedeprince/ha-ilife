@@ -54,6 +54,12 @@
   "exceptions": {
     "device_offline": {
       "message": "The vacuum is asleep at its dock and can't be reached from the cloud right now. It wakes automatically for scheduled cleans; on-demand commands only work while it is awake."
+    },
+    "command_unsupported": {
+      "message": "{device} does not advertise a data point for \"{action}\", so there is no command to send it. If the official app can do this, please open an issue with the integration's diagnostics attached."
+    },
+    "fan_speed_unsupported": {
+      "message": "\"{fan_speed}\" is not a suction level this vacuum accepts. Supported: {options}."
     }
   },
   "entity": {
