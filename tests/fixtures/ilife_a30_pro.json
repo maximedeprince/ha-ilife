@@ -1,0 +1,308 @@
+{
+  "specification": {
+    "category": "sd",
+    "functions": [
+      {
+        "code": "power_go",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "pause",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "switch_charge",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "mode",
+        "type": "Enum",
+        "values": "{\"range\":[\"smart\",\"chargego\",\"zone\",\"pose\",\"part\"]}"
+      },
+      {
+        "code": "suction",
+        "type": "Enum",
+        "values": "{\"range\":[\"strong\",\"normal\",\"gentle\"]}"
+      },
+      {
+        "code": "cistern",
+        "type": "Enum",
+        "values": "{\"range\":[\"low\",\"middle\",\"high\"]}"
+      },
+      {
+        "code": "seek",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "direction_control",
+        "type": "Enum",
+        "values": "{\"range\":[\"backward\",\"turn_left\",\"turn_right\",\"stop\"]}"
+      },
+      {
+        "code": "reset_map",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "path_data",
+        "type": "Raw",
+        "values": "{}"
+      },
+      {
+        "code": "command_trans",
+        "type": "Raw",
+        "values": "{}"
+      },
+      {
+        "code": "request",
+        "type": "Enum",
+        "values": "{\"range\":[\"get_map\",\"get_path\",\"get_both\"]}"
+      },
+      {
+        "code": "reset_edge_brush",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "reset_roll_brush",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "reset_filter",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "switch_disturb",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "volume_set",
+        "type": "Integer",
+        "values": "{\"unit\":\"%\",\"min\":0,\"max\":10,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "break_clean",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "voice_data",
+        "type": "Raw",
+        "values": "{}"
+      },
+      {
+        "code": "dust_collection_num",
+        "type": "Integer",
+        "values": "{\"unit\":\"\",\"min\":0,\"max\":99999,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "dust_collection_switch",
+        "type": "Boolean",
+        "values": "{}"
+      }
+    ],
+    "status": [
+      {
+        "code": "power_go",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "pause",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "switch_charge",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "mode",
+        "type": "Enum",
+        "values": "{\"range\":[\"smart\",\"chargego\",\"zone\",\"pose\",\"part\"]}"
+      },
+      {
+        "code": "status",
+        "type": "Enum",
+        "values": "{\"range\":[\"standby\",\"zone_clean\",\"part_clean\",\"cleaning\",\"paused\",\"goto_pos\",\"pos_arrived\",\"pos_unarrive\",\"goto_charge\",\"charging\",\"charge_done\",\"sleep\"]}"
+      },
+      {
+        "code": "clean_time",
+        "type": "Integer",
+        "values": "{\"unit\":\"min\",\"min\":0,\"max\":9999,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "clean_area",
+        "type": "Integer",
+        "values": "{\"unit\":\"㎡\",\"min\":0,\"max\":9999,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "electricity_left",
+        "type": "Integer",
+        "values": "{\"unit\":\"%\",\"min\":0,\"max\":100,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "suction",
+        "type": "Enum",
+        "values": "{\"range\":[\"strong\",\"normal\",\"gentle\",\"closed\"]}"
+      },
+      {
+        "code": "cistern",
+        "type": "Enum",
+        "values": "{\"range\":[\"low\",\"middle\",\"high\",\"closed\"]}"
+      },
+      {
+        "code": "seek",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "direction_control",
+        "type": "Enum",
+        "values": "{\"range\":[\"backward\",\"turn_left\",\"turn_right\",\"stop\"]}"
+      },
+      {
+        "code": "reset_map",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "path_data",
+        "type": "Raw",
+        "values": "{}"
+      },
+      {
+        "code": "command_trans",
+        "type": "Raw",
+        "values": "{}"
+      },
+      {
+        "code": "request",
+        "type": "Enum",
+        "values": "{\"range\":[\"get_map\",\"get_path\",\"get_both\"]}"
+      },
+      {
+        "code": "edge_brush",
+        "type": "Integer",
+        "values": "{\"unit\":\"min\",\"min\":0,\"max\":900,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "reset_edge_brush",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "roll_brush",
+        "type": "Integer",
+        "values": "{\"unit\":\"min\",\"min\":0,\"max\":1800,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "reset_roll_brush",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "filter",
+        "type": "Integer",
+        "values": "{\"unit\":\"min\",\"min\":0,\"max\":900,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "reset_filter",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "switch_disturb",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "volume_set",
+        "type": "Integer",
+        "values": "{\"unit\":\"%\",\"min\":0,\"max\":10,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "break_clean",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "fault",
+        "type": "Bitmap",
+        "values": "{\"label\":[\"bumper_fault\",\"obs_fault\",\"wall_fault\",\"cliff_fault\",\"land_fault\",\"nosewheel_fault\",\"l_brush_fault\",\"r_brush_fault\",\"brush_fault\",\"l_wheel_fault\",\"r_wheel_fault\",\"m_brush_fault\",\"fan_fault\",\"waterpump_fault\",\"air_pump_fault\",\"garbage_fault\",\"water_box_fault\",\"filter_fault\",\"battery_fault\",\"gyro_fault\",\"radar_fault\",\"camera_fault\",\"stuck_fault\",\"flow_fault\",\"other_fault\",\"low_light_fault\",\"water1_fault\",\"water2_fault\",\"explore_fault\"]}"
+      },
+      {
+        "code": "total_clean_area",
+        "type": "Integer",
+        "values": "{\"unit\":\"㎡\",\"min\":0,\"max\":2073741824,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "total_clean_count",
+        "type": "Integer",
+        "values": "{\"unit\":\"\",\"min\":0,\"max\":2073741824,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "total_clean_time",
+        "type": "Integer",
+        "values": "{\"unit\":\"min\",\"min\":0,\"max\":2073741824,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "voice_data",
+        "type": "Raw",
+        "values": "{}"
+      },
+      {
+        "code": "dust_collection_num",
+        "type": "Integer",
+        "values": "{\"unit\":\"\",\"min\":0,\"max\":99999,\"scale\":0,\"step\":1}"
+      },
+      {
+        "code": "dust_collection_switch",
+        "type": "Boolean",
+        "values": "{}"
+      }
+    ]
+  },
+  "status": {
+    "power_go": false,
+    "pause": false,
+    "switch_charge": false,
+    "mode": "smart",
+    "status": "base_charging",
+    "clean_time": 10,
+    "clean_area": 10,
+    "electricity_left": 99,
+    "suction": "strong",
+    "cistern": "high",
+    "seek": false,
+    "direction_control": "foward",
+    "reset_map": false,
+    "path_data": "",
+    "command_trans": "qgABFxc=",
+    "request": "get_map",
+    "edge_brush": 855,
+    "reset_edge_brush": false,
+    "roll_brush": 1746,
+    "reset_roll_brush": false,
+    "filter": 837,
+    "reset_filter": false,
+    "switch_disturb": false,
+    "volume_set": 8,
+    "break_clean": true,
+    "fault": 0,
+    "total_clean_area": 496,
+    "total_clean_count": 61,
+    "total_clean_time": 673,
+    "voice_data": "qgAHNQAAAAAAADU=",
+    "dust_collection_num": 1,
+    "dust_collection_switch": false
+  }
+}

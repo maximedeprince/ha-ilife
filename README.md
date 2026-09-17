@@ -59,10 +59,15 @@ back the four fields and the brand ships.
 
 ## Features — ILIFE Clean backend
 
-- 🧹 Full vacuum entity: start / pause / stop / return to dock / locate
+- 🧹 Full vacuum entity: start / pause / stop / return to dock / locate / suction
 - 🔋 Battery, current cleaning area/time, fault status, connectivity (online/offline)
-- 🧭 Cleaning mode select, if supported by the device
-- 🔀 Suction, water level, mop/self-empty toggles, consumables, and other metrics.
+- 🧭 Cleaning mode and water level selects, if supported by the device
+- 🔀 Mop/self-empty toggles, consumables, and every other metric the device reports
+
+Everything above is derived from the device's own live `/specifications` response, so
+each model gets exactly the controls it advertises and nothing it does not. Only
+devices Tuya files under the **robot vacuum** category are set up — the rest of the
+linked Tuya account (lamps, plugs, cameras…) is left alone.
 
 ## Installation (HACS)
 
@@ -76,6 +81,11 @@ back the four fields and the brand ships.
 Edit a dashboard → **Add card** → search **ILIFE Vacuum Card** → pick your vacuum
 in the visual editor. Everything else (map, sensors, schedules…) is detected
 automatically. No YAML needed.
+
+The card shows the sections its entities exist for, so it is deliberately smaller on
+the **ILIFE Clean** backend: Tuya exposes no map image and no cleaning history for
+these vacuums, so the map tile, the history list and the schedule editor are not
+drawn. Controls, battery, current clean and the settings the device advertises are.
 
 The card is registered automatically for storage‑mode dashboards. For
 **YAML‑mode** dashboards, add the resource manually:

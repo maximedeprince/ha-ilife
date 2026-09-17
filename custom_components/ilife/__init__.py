@@ -33,6 +33,7 @@ from .const import (
     CONF_UID,
     DEFAULT_START_MODE,
     DOMAIN,
+    TUYA_CATEGORY_VACUUM,
 )
 from .tuya_api import TuyaAuthError, TuyaClient, TuyaError, TuyaVacuum
 from .tuya_dynamic import parse_functions
@@ -206,7 +207,6 @@ async def _async_setup_ilifehome_entry(hass: HomeAssistant, entry: ConfigEntry) 
         "backend": BACKEND_ILIFEHOME, "account": account, "coordinators": coordinators,
         "platforms": ILIFEHOME_PLATFORMS,
     }
-    await _async_register_frontend(hass)
 
 
 async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -221,8 +221,25 @@ async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry
     except TuyaError as err:
         raise ConfigEntryNotReady(str(err)) from err
 
+    vacuums = [d for d in devices if d.get("category") == TUYA_CATEGORY_VACUUM]
+    if not vacuums:
+        # Rather than set up nothing at all, trust the account over our category guess:
+        # a model filed under an unexpected category still deserves to work, and the
+        # extra entities are visible enough that it gets reported.
+        _LOGGER.warning(
+            "ILIFE Clean: none of the %d linked Tuya devices are in the robot-vacuum "
+            "category (%r); setting all of them up. Please report this with the "
+            "integration's diagnostics: %s",
+            len(devices), TUYA_CATEGORY_VACUUM,
+            sorted({d.get("category") for d in devices}),
+        )
+        vacuums = devices
+    elif len(vacuums) != len(devices):
+        _LOGGER.debug("ILIFE Clean: %d of %d linked Tuya devices are vacuums",
+                      len(vacuums), len(devices))
+
     coordinators: dict[str, ILifeTuyaCoordinator] = {}
-    for dev in devices:
+    for dev in vacuums:
         coordinator = ILifeTuyaCoordinator(hass, entry, TuyaVacuum(client, dev))
         await coordinator.async_refresh()
         coordinators[dev["id"]] = coordinator
@@ -240,6 +257,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _async_setup_ilife_clean_entry(hass, entry)
     else:
         await _async_setup_ilifehome_entry(hass, entry)
+    # Both backends ship the same card: registering it only on the ILIFEHOME path left
+    # ILIFE Clean users with no "ILIFE Vacuum Card" in the card picker at all, and
+    # copying the .js into www/community by hand as the only way out (#23).
+    await _async_register_frontend(hass)
     platforms = hass.data[DOMAIN][entry.entry_id]["platforms"]
     await hass.config_entries.async_forward_entry_setups(entry, platforms)
     return True

@@ -91,6 +91,13 @@ TUYA_DP_CLEAN_TIME = "clean_time"
 TUYA_DP_CLEAN_RECORD = "clean_record"
 TUYA_DP_FAULT = "fault"
 TUYA_DP_MODE = "mode"
+TUYA_DP_SUCTION = "suction"
+TUYA_DP_CISTERN = "cistern"
+
+# Tuya's product-category code for a robot vacuum ("sweeping robot"). A Cloud Project
+# lists *every* device the linked account owns, so without this an account with lamps,
+# an air conditioner and a doorbell got a vacuum entity for each of them (#23).
+TUYA_CATEGORY_VACUUM = "sd"
 
 # Status enum values, as reported. A model can report a value that is not in the range
 # it advertises in its own /specifications (the A12 Pro reports "base_charging" while
@@ -110,5 +117,5 @@ TUYA_STATUS_CLEANING = {"cleaning", "smart_clean", "zone_clean", "part_clean",
 TUYA_KNOWN_DP_CODES = {
     TUYA_DP_SWITCH, TUYA_DP_POWER_GO, TUYA_DP_STATUS, TUYA_DP_PAUSE, TUYA_DP_RETURN_HOME,
     TUYA_DP_BATTERY, TUYA_DP_LOCATE, TUYA_DP_CLEAN_AREA, TUYA_DP_CLEAN_TIME,
-    TUYA_DP_CLEAN_RECORD, TUYA_DP_FAULT, TUYA_DP_MODE,
+    TUYA_DP_CLEAN_RECORD, TUYA_DP_FAULT, TUYA_DP_MODE, TUYA_DP_SUCTION, TUYA_DP_CISTERN,
 }

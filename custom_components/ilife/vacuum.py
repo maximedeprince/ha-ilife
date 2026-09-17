@@ -19,10 +19,12 @@ from .const import (
     SUCTION_LEVELS,
     TUYA_DP_FAULT,
     TUYA_DP_LOCATE,
+    TUYA_DP_MODE,
     TUYA_DP_PAUSE,
     TUYA_DP_POWER_GO,
     TUYA_DP_RETURN_HOME,
     TUYA_DP_STATUS,
+    TUYA_DP_SUCTION,
     TUYA_DP_SWITCH,
     TUYA_STATUS_CLEANING,
     TUYA_STATUS_DOCKED,
@@ -34,6 +36,7 @@ from .const import (
 )
 from .entity import ILifeEntity
 from .tuya_api import TuyaError, TuyaOfflineError
+from .tuya_dynamic import command_for, enum_command, range_values
 from .tuya_entity import TuyaEntity
 
 
@@ -112,19 +115,6 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         await self._cmd(self.api.set_prop, "VacWateState", pack_vws(cur, suction=fan_speed), None, False)
 
 
-def _range_values(spec_functions, code):
-    return ((spec_functions.get(code) or {}).get("values") or {}).get("range") or []
-
-
-def _match(range_list, *candidates):
-    """First entry of `range_list` matching one of `candidates`, case-insensitively."""
-    lower = {str(v).lower(): v for v in range_list}
-    for c in candidates:
-        if c in lower:
-            return lower[c]
-    return None
-
-
 class TuyaVacuum(TuyaEntity, StateVacuumEntity):
     """ILIFE Clean (Tuya) vacuum. Features/commands are derived from the device's own
     live /specifications response — nothing here assumes a DP the device didn't advertise."""
@@ -135,17 +125,49 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         super().__init__(coordinator)
         self._attr_unique_id = f"{self.api.device_id}_vacuum"
         functions = coordinator.spec_functions
+
+        # Each command is resolved once, against this device's own spec. A feature is
+        # advertised only when there is a command to back it: claiming START because
+        # some start-ish DP exists, then sending a different one, is what issues #23
+        # and #24 were.
+        self._cmd_start = (
+            command_for(functions, TUYA_DP_POWER_GO, "start", "smart", "clean", boolean=True)
+            or command_for(functions, TUYA_DP_SWITCH, "start", "smart", "clean", boolean=True)
+        )
+        self._cmd_stop = (
+            command_for(functions, TUYA_DP_POWER_GO, "stop", "standby", "idle", boolean=False)
+            or command_for(functions, TUYA_DP_SWITCH, "stop", "standby", "idle", boolean=False)
+        )
+        # Never fall back to a Boolean power_go here: false is "stop", not "pause".
+        self._cmd_pause = (
+            command_for(functions, TUYA_DP_PAUSE, "pause", boolean=True)
+            or enum_command(functions, TUYA_DP_POWER_GO, "pause")
+        )
+        self._cmd_return = (
+            command_for(functions, TUYA_DP_RETURN_HOME, "chargego", "charge", boolean=True)
+            or enum_command(functions, TUYA_DP_MODE, "chargego", "charge_go", "back_charge")
+        )
+        self._cmd_locate = command_for(functions, TUYA_DP_LOCATE, "seek", boolean=True)
+        # Suction is the fan speed every ILIFE Clean model advertises; exposing it as
+        # the vacuum's own fan_speed is what the Lovelace card (and HA's stock vacuum
+        # card) drive, instead of a nameless generic select nothing knows about.
+        self._suction_range = [str(v) for v in range_values(functions, TUYA_DP_SUCTION)]
+
         features = VacuumEntityFeature.STATE
-        if TUYA_DP_SWITCH in functions or TUYA_DP_POWER_GO in functions:
-            features |= VacuumEntityFeature.START | VacuumEntityFeature.STOP
-        if TUYA_DP_PAUSE in functions or TUYA_DP_POWER_GO in functions:
+        if self._cmd_start:
+            features |= VacuumEntityFeature.START
+        if self._cmd_stop:
+            features |= VacuumEntityFeature.STOP
+        if self._cmd_pause:
             features |= VacuumEntityFeature.PAUSE
-        if TUYA_DP_RETURN_HOME in functions:
+        if self._cmd_return:
             features |= VacuumEntityFeature.RETURN_HOME
-        if TUYA_DP_LOCATE in functions:
+        if self._cmd_locate:
             features |= VacuumEntityFeature.LOCATE
+        if self._suction_range:
+            features |= VacuumEntityFeature.FAN_SPEED
+            self._attr_fan_speed_list = self._suction_range
         self._attr_supported_features = features
-        self._power_go_range = _range_values(functions, TUYA_DP_POWER_GO)
 
     @property
     def activity(self):
@@ -175,6 +197,11 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         return VacuumActivity.IDLE
 
     @property
+    def fan_speed(self):
+        v = (self.coordinator.data or {}).get(TUYA_DP_SUCTION)
+        return None if v is None else str(v)
+
+    @property
     def extra_state_attributes(self):
         fault = (self.coordinator.data or {}).get(TUYA_DP_FAULT)
         return {"fault": fault} if fault else {}
@@ -190,29 +217,39 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
             raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_request_refresh()
 
+    async def _run(self, command, action):
+        if command is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="command_unsupported",
+                translation_placeholders={
+                    "action": action,
+                    "device": self.api.device.get("product_name") or "this vacuum",
+                },
+            )
+        await self._send(*command)
+
     async def async_start(self):
-        start = _match(self._power_go_range, "start", "smart", "clean")
-        if start is not None:
-            await self._send(TUYA_DP_POWER_GO, start)
-        else:
-            await self._send(TUYA_DP_SWITCH, True)
+        await self._run(self._cmd_start, "start")
 
     async def async_pause(self):
-        pause = _match(self._power_go_range, "pause")
-        if pause is not None:
-            await self._send(TUYA_DP_POWER_GO, pause)
-        else:
-            await self._send(TUYA_DP_PAUSE, True)
+        await self._run(self._cmd_pause, "pause")
 
     async def async_stop(self, **kwargs):
-        stop = _match(self._power_go_range, "stop")
-        if stop is not None:
-            await self._send(TUYA_DP_POWER_GO, stop)
-        else:
-            await self._send(TUYA_DP_SWITCH, False)
+        await self._run(self._cmd_stop, "stop")
 
     async def async_return_to_base(self, **kwargs):
-        await self._send(TUYA_DP_RETURN_HOME, True)
+        await self._run(self._cmd_return, "return to base")
 
     async def async_locate(self, **kwargs):
-        await self._send(TUYA_DP_LOCATE, True)
+        await self._run(self._cmd_locate, "locate")
+
+    async def async_set_fan_speed(self, fan_speed, **kwargs):
+        if fan_speed not in self._suction_range:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="fan_speed_unsupported",
+                translation_placeholders={
+                    "fan_speed": str(fan_speed),
+                    "options": ", ".join(self._suction_range) or "none",
+                },
+            )
+        await self._send(TUYA_DP_SUCTION, fan_speed)
