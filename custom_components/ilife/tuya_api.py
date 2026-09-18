@@ -278,6 +278,9 @@ class TuyaClient:
 
     def send_commands(self, device_id: str, commands: list[dict]) -> bool:
         self.authenticate()
+        # Logged before the call: when a command is accepted by Tuya and the robot still
+        # does nothing, the only thing worth knowing is exactly what went out (#24).
+        _LOGGER.debug("Tuya command -> %s: %s", device_id, commands)
         try:
             self._call("POST", f"/v1.0/devices/{urllib.parse.quote(device_id)}/commands",
                        {"commands": commands})

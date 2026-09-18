@@ -53,59 +53,120 @@ def load(name):
     return parse_functions(d["specification"]), d["status"]
 
 
+FULL_CLEAN = ("smart", "auto", "clean", "smart_clean", "autoclean")
+
+
+def _list(*pairs):
+    out = {}
+    for pair in pairs:
+        if pair:
+            out.setdefault(pair[0], pair[1])
+    return [{"code": c, "value": v} for c, v in out.items()]
+
+
 def commands(functions):
     """Exactly what TuyaVacuum.__init__ derives, kept in step with vacuum.py."""
+    run = (command_for(functions, "power_go", "start", "smart", "clean", boolean=True)
+           or command_for(functions, "switch", "start", "smart", "clean", boolean=True))
+    halt = (command_for(functions, "power_go", "stop", "standby", "idle", boolean=False)
+            or command_for(functions, "switch", "stop", "standby", "idle", boolean=False))
+    hold = (command_for(functions, "pause", "pause", boolean=True)
+            or enum_command(functions, "power_go", "pause"))
+    unhold = command_for(functions, "pause", "resume", "continue", boolean=False)
+    full_clean = enum_command(functions, "mode", *FULL_CLEAN)
     return {
-        "start": (command_for(functions, "power_go", "start", "smart", "clean", boolean=True)
-                  or command_for(functions, "switch", "start", "smart", "clean", boolean=True)),
-        "stop": (command_for(functions, "power_go", "stop", "standby", "idle", boolean=False)
-                 or command_for(functions, "switch", "stop", "standby", "idle", boolean=False)),
-        "pause": (command_for(functions, "pause", "pause", boolean=True)
-                  or enum_command(functions, "power_go", "pause")),
-        "return_to_base": (command_for(functions, "switch_charge", "chargego", "charge",
-                                       boolean=True)
-                           or enum_command(functions, "mode", "chargego", "charge_go",
-                                           "back_charge")),
-        "locate": command_for(functions, "seek", "seek", boolean=True),
+        "start": _list(full_clean, run, unhold) if (full_clean or run) else [],
+        "resume": _list(unhold, run) if (run or unhold) else [],
+        "pause": _list(hold, halt) if hold else [],
+        "stop": _list(halt, unhold) if halt else [],
+        "return_to_base": _list(
+            command_for(functions, "switch_charge", "chargego", "charge", boolean=True)
+            or enum_command(functions, "mode", "chargego", "charge_go", "back_charge")),
+        "locate": _list(command_for(functions, "seek", "seek", boolean=True)),
     }
 
 
 # --- the two devices that reported the bug ------------------------------------ #
 
-def test_boolean_power_go_models_start_and_stop_on_power_go():
-    """#23 (A30 Pro) and #24 (T20s): `power_go` is a Boolean and `switch` does not
-    exist, so both commands must land on `power_go` — the old code sent `switch`."""
-    for model in ("ilife_t20s", "ilife_a30_pro"):
+REPORTED = ("ilife_t20s", "ilife_a30_pro")
+
+
+def test_start_writes_the_run_flag_and_the_pause_flag_together():
+    """v0.6.0 sent `power_go: true` alone — Tuya accepted it and the robots did
+    nothing (#3, #23, #24). ILIFE firmware wants the pause flag in the same command,
+    which is how tuya-local drives these same models successfully."""
+    for model in REPORTED:
+        functions, _ = load(model)
+        start = commands(functions)["start"]
+        assert {"code": "power_go", "value": True} in start, model
+        assert {"code": "pause", "value": False} in start, model
+
+
+def test_start_asks_for_a_full_clean():
+    """A T20s sitting in `part` answered Start with a spot clean (#24). START means
+    clean the place, so it names the mode; the mode select covers the rest."""
+    for model in REPORTED:
+        functions, _ = load(model)
+        assert commands(functions)["start"][0] == {"code": "mode", "value": "smart"}, model
+
+
+def test_run_flag_lands_on_power_go_not_switch():
+    """The original 2008: these models declare `power_go` Boolean and no `switch`."""
+    for model in REPORTED:
         functions, _ = load(model)
         assert functions["power_go"]["type"] == "Boolean", model
         assert "switch" not in functions, model
-        cmds = commands(functions)
-        assert cmds["start"] == ("power_go", True), model
-        assert cmds["stop"] == ("power_go", False), model
+        codes = {c["code"] for c in commands(functions)["stop"]}
+        assert "switch" not in codes, model
+        assert {"code": "power_go", "value": False} in commands(functions)["stop"], model
 
 
 def test_every_command_is_writable_on_the_device():
-    for model in ("ilife_t20s", "ilife_a30_pro"):
+    for model in REPORTED:
         functions, _ = load(model)
-        for action, cmd in commands(functions).items():
-            assert cmd is not None, f"{model}: no command for {action}"
-            code, value = cmd
-            assert code in functions, f"{model}: {action} targets unadvertised DP {code!r}"
-            legal = range_values(functions, code)
-            assert not legal or value in legal, f"{model}: {action}={value!r} not in {legal}"
+        for action, cmds in commands(functions).items():
+            assert cmds, f"{model}: no command for {action}"
+            for cmd in cmds:
+                code, value = cmd["code"], cmd["value"]
+                assert code in functions, \
+                    f"{model}: {action} targets unadvertised DP {code!r}"
+                legal = range_values(functions, code)
+                assert not legal or value in legal, \
+                    f"{model}: {action}={value!r} not in {legal}"
+
+
+def test_an_action_never_writes_the_same_dp_twice():
+    shapes = {m: load(m)[0] for m in REPORTED}
+    # an Enum power_go carries "pause" and "stop" on the same data point
+    shapes["enum power_go"] = {
+        "power_go": {"type": "Enum", "values": {"range": ["start", "pause", "stop"]}}}
+    for model, functions in shapes.items():
+        for action, cmds in commands(functions).items():
+            codes = [c["code"] for c in cmds]
+            assert len(codes) == len(set(codes)), f"{model}: {action} repeats a DP"
 
 
 def test_pause_never_degrades_into_stop():
-    """A Boolean `power_go` must not be used as a pause fallback: false means stop."""
-    for model in ("ilife_t20s", "ilife_a30_pro"):
+    """Pause must hold the robot's place: a Boolean power_go set false is a stop."""
+    for model in REPORTED:
         functions, _ = load(model)
-        assert commands(functions)["pause"] == ("pause", True), model
+        assert {"code": "pause", "value": True} in commands(functions)["pause"], model
+    # a model with no pause DP gets no PAUSE feature rather than a disguised stop
+    assert commands({"power_go": {"type": "Boolean", "values": {}}})["pause"] == []
+
+
+def test_resume_does_not_restart_the_clean():
+    """Start on a paused vacuum resumes, so it must not re-assert the mode."""
+    for model in REPORTED:
+        functions, _ = load(model)
+        assert "mode" not in {c["code"] for c in commands(functions)["resume"]}, model
+        assert {"code": "pause", "value": False} in commands(functions)["resume"], model
 
 
 def test_suction_and_cistern_are_dedicated_not_generic():
     """Suction becomes the vacuum's fan_speed and cistern the water-level select, so
     neither may still show up as a nameless generic entity."""
-    for model in ("ilife_t20s", "ilife_a30_pro"):
+    for model in REPORTED:
         functions, status = load(model)
         assert range_values(functions, "suction") == ["strong", "normal", "gentle"], model
         assert range_values(functions, "cistern") == ["low", "middle", "high"], model
@@ -119,21 +180,22 @@ def test_suction_and_cistern_are_dedicated_not_generic():
 def test_enum_power_go_still_works():
     functions = {"power_go": {"type": "Enum",
                               "values": {"range": ["start", "pause", "stop"]}}}
-    assert command_for(functions, "power_go", "start", "smart", boolean=True) == \
-        ("power_go", "start")
-    assert command_for(functions, "power_go", "stop", boolean=False) == ("power_go", "stop")
-    assert enum_command(functions, "power_go", "pause") == ("power_go", "pause")
+    assert commands(functions)["start"] == [{"code": "power_go", "value": "start"}]
+    assert commands(functions)["stop"] == [{"code": "power_go", "value": "stop"}]
+    # pause and stop are both values of the same Enum: only the meant one is sent
+    assert commands(functions)["pause"] == [{"code": "power_go", "value": "pause"}]
 
 
 def test_boolean_switch_only_model():
     functions = {"switch": {"type": "Boolean", "values": {}}}
-    assert commands(functions)["start"] == ("switch", True)
-    assert commands(functions)["stop"] == ("switch", False)
+    assert commands(functions)["start"] == [{"code": "switch", "value": True}]
+    assert commands(functions)["stop"] == [{"code": "switch", "value": False}]
 
 
 def test_missing_dp_yields_no_command_instead_of_a_wrong_one():
     assert command_for({}, "power_go", "start") is None
     assert enum_command({}, "mode", "chargego") is None
+    assert commands({})["start"] == []
     # an Enum that simply has no matching value must not fall through to a Boolean
     functions = {"power_go": {"type": "Enum", "values": {"range": ["standby"]}}}
     assert command_for(functions, "power_go", "start", "smart", boolean=True) is None
@@ -141,7 +203,13 @@ def test_missing_dp_yields_no_command_instead_of_a_wrong_one():
 
 def test_return_home_falls_back_to_the_mode_enum():
     functions = {"mode": {"type": "Enum", "values": {"range": ["smart", "chargego"]}}}
-    assert commands(functions)["return_to_base"] == ("mode", "chargego")
+    assert commands(functions)["return_to_base"] == [{"code": "mode", "value": "chargego"}]
+
+
+def test_mode_only_model_can_still_start():
+    """No run flag at all: writing the mode is the whole command."""
+    functions = {"mode": {"type": "Enum", "values": {"range": ["smart", "chargego"]}}}
+    assert commands(functions)["start"] == [{"code": "mode", "value": "smart"}]
 
 
 def test_match_is_case_insensitive_and_keeps_the_devices_own_spelling():

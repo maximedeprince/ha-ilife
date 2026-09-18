@@ -99,6 +99,12 @@ TUYA_DP_CISTERN = "cistern"
 # an air conditioner and a doorbell got a vacuum entity for each of them (#23).
 TUYA_CATEGORY_VACUUM = "sd"
 
+# `mode` values meaning "clean the whole place", best first. On these robots writing
+# `mode` is itself a command, not a stored preference — selecting a cleaning mode makes
+# the robot go and clean (#24). START therefore asks for a full clean; the Cleaning mode
+# select stays the way to ask for a zone/spot/edge clean.
+TUYA_MODE_FULL_CLEAN = ("smart", "auto", "clean", "smart_clean", "autoclean")
+
 # Status enum values, as reported. A model can report a value that is not in the range
 # it advertises in its own /specifications (the A12 Pro reports "base_charging" while
 # advertising only "charging" and "charge_done"), so this is observation, not spec.
