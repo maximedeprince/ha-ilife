@@ -329,10 +329,19 @@ async def _async_register_card_resource(hass: HomeAssistant) -> None:
     if data.get("_card_registered"):
         return
     lovelace = hass.data.get("lovelace")
-    if lovelace is None or getattr(lovelace, "mode", None) != "storage":
-        return  # YAML mode: resource is added manually (documented in README)
+    if lovelace is None:
+        return
+    # Detect a storage-backed resource collection by what it can do, not by the name of
+    # a mode attribute. `LovelaceData.mode` was renamed to `resource_mode` in Home
+    # Assistant, and reading the old name through a getattr default meant this function
+    # silently returned every single time: the card stopped being registered for anyone,
+    # and installs that had it kept whatever URL version they were on (#23). Only
+    # ResourceStorageCollection has async_create_item; the YAML one is read-only and is
+    # the documented manual case.
     resources = getattr(lovelace, "resources", None)
-    if resources is None:
+    if resources is None or not hasattr(resources, "async_create_item"):
+        _LOGGER.debug("ILIFE: Lovelace resources are not storage-backed; add %s manually",
+                      CARD_URL)
         return
     if not getattr(resources, "loaded", False):
         async def _retry(_now):
@@ -353,10 +362,16 @@ async def _async_register_card_resource(hass: HomeAssistant) -> None:
     try:
         if not existing:
             await resources.async_create_item({"res_type": "module", "url": want})
-            _LOGGER.info("ILIFE: Lovelace card resource added")
+            _LOGGER.info("ILIFE: Lovelace card resource added (%s)", want)
         elif existing[0].get("url") != want:
             await resources.async_update_item(existing[0]["id"], {"res_type": "module", "url": want})
+            _LOGGER.info("ILIFE: Lovelace card resource updated to %s", want)
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("ILIFE: could not register card resource", exc_info=True)
+        # Loud on purpose: a silent failure here leaves the user with no card in the
+        # picker and nothing to go on, which is how #23 was spent.
+        _LOGGER.warning(
+            "ILIFE: could not register the Lovelace card resource automatically. Add it "
+            "by hand under Settings > Dashboards > Resources: URL %s, type JavaScript "
+            "module.", want, exc_info=True)
     finally:
         data["_card_registered"] = True
