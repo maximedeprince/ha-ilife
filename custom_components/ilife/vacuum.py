@@ -26,6 +26,7 @@ from .const import (
     TUYA_DP_STATUS,
     TUYA_DP_SUCTION,
     TUYA_DP_SWITCH,
+    TUYA_MODE_FULL_CLEAN,
     TUYA_STATUS_CLEANING,
     TUYA_STATUS_DOCKED,
     TUYA_STATUS_IDLE,
@@ -115,6 +116,27 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         await self._cmd(self.api.set_prop, "VacWateState", pack_vws(cur, suction=fan_speed), None, False)
 
 
+def _commands(*pairs):
+    """The (code, value) pairs that this device supports, as one Tuya command list.
+
+    Tuya applies a command list in order, in a single call, which is what lets one
+    action write several data points as a single instruction to the robot. Pairs that
+    came back None (a data point this model does not have) are simply dropped, so an
+    action degrades to whatever the device can actually do rather than failing.
+
+    Pass the pair that carries the action's meaning first: where two of them resolve to
+    the same data point, the first wins. On a model whose `power_go` is an Enum, "pause"
+    and "stop" are both values of it, and sending both would tell the robot two
+    different things in one breath.
+    """
+    out = {}
+    for pair in pairs:
+        if pair is not None:
+            code, value = pair
+            out.setdefault(code, value)
+    return [{"code": code, "value": value} for code, value in out.items()]
+
+
 class TuyaVacuum(TuyaEntity, StateVacuumEntity):
     """ILIFE Clean (Tuya) vacuum. Features/commands are derived from the device's own
     live /specifications response — nothing here assumes a DP the device didn't advertise."""
@@ -126,28 +148,52 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         self._attr_unique_id = f"{self.api.device_id}_vacuum"
         functions = coordinator.spec_functions
 
-        # Each command is resolved once, against this device's own spec. A feature is
-        # advertised only when there is a command to back it: claiming START because
-        # some start-ish DP exists, then sending a different one, is what issues #23
-        # and #24 were.
-        self._cmd_start = (
-            command_for(functions, TUYA_DP_POWER_GO, "start", "smart", "clean", boolean=True)
-            or command_for(functions, TUYA_DP_SWITCH, "start", "smart", "clean", boolean=True)
-        )
-        self._cmd_stop = (
-            command_for(functions, TUYA_DP_POWER_GO, "stop", "standby", "idle", boolean=False)
-            or command_for(functions, TUYA_DP_SWITCH, "stop", "standby", "idle", boolean=False)
-        )
-        # Never fall back to a Boolean power_go here: false is "stop", not "pause".
-        self._cmd_pause = (
-            command_for(functions, TUYA_DP_PAUSE, "pause", boolean=True)
+        # Each action is resolved once, against this device's own spec, into the list of
+        # data points to write for it. A feature is advertised only when there is a
+        # command to back it.
+        #
+        # The run flag and the pause flag are written **together**, in one Tuya command.
+        # That is not belt and braces: ILIFE firmware ignores `power_go` on its own
+        # (v0.6.0 sent exactly that, Tuya accepted it, and three vacuums did nothing —
+        # #3, #23, #24), while tuya-local drives the same robots locally by always
+        # writing both flags in the same frame, and works. Home Assistant's own Tuya
+        # integration sends `power_go` alone, so it has the same blind spot.
+        run = command_for(functions, TUYA_DP_POWER_GO, "start", "smart", "clean",
+                          boolean=True) \
+            or command_for(functions, TUYA_DP_SWITCH, "start", "smart", "clean",
+                           boolean=True)
+        halt = command_for(functions, TUYA_DP_POWER_GO, "stop", "standby", "idle",
+                           boolean=False) \
+            or command_for(functions, TUYA_DP_SWITCH, "stop", "standby", "idle",
+                           boolean=False)
+        # Never derive pause from a Boolean power_go: false there means stop, not pause.
+        hold = command_for(functions, TUYA_DP_PAUSE, "pause", boolean=True) \
             or enum_command(functions, TUYA_DP_POWER_GO, "pause")
-        )
-        self._cmd_return = (
-            command_for(functions, TUYA_DP_RETURN_HOME, "chargego", "charge", boolean=True)
-            or enum_command(functions, TUYA_DP_MODE, "chargego", "charge_go", "back_charge")
-        )
-        self._cmd_locate = command_for(functions, TUYA_DP_LOCATE, "seek", boolean=True)
+        unhold = command_for(functions, TUYA_DP_PAUSE, "resume", "continue",
+                             boolean=False)
+        full_clean = enum_command(functions, TUYA_DP_MODE, *TUYA_MODE_FULL_CLEAN)
+
+        # Each list is mode first, then the run flag, then the pause flag.
+        #
+        # START means "clean the place", so it asks for the full-clean mode as well:
+        # writing `mode` is what demonstrably starts these robots (#24), and a device
+        # left in `part`/`zone` would otherwise answer Start with a spot clean. The
+        # Cleaning mode select remains the way to ask for those.
+        #
+        # Each action only exists if something can really perform it. In particular
+        # PAUSE requires a genuine pause data point: a Boolean `power_go` set to false
+        # means stop, and offering that as pause would quietly lose the user's place.
+        self._cmd_start = _commands(full_clean, run, unhold) if (full_clean or run) else []
+        self._cmd_resume = _commands(unhold, run) if (run or unhold) else []
+        self._cmd_pause = _commands(hold, halt) if hold else []
+        self._cmd_stop = _commands(halt, unhold) if halt else []
+        self._cmd_return = _commands(
+            command_for(functions, TUYA_DP_RETURN_HOME, "chargego", "charge",
+                        boolean=True)
+            or enum_command(functions, TUYA_DP_MODE, "chargego", "charge_go",
+                            "back_charge"))
+        self._cmd_locate = _commands(
+            command_for(functions, TUYA_DP_LOCATE, "seek", boolean=True))
         # Suction is the fan speed every ILIFE Clean model advertises; exposing it as
         # the vacuum's own fan_speed is what the Lovelace card (and HA's stock vacuum
         # card) drive, instead of a nameless generic select nothing knows about.
@@ -207,8 +253,11 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         return {"fault": fault} if fault else {}
 
     async def _send(self, code, value):
+        await self._send_many([{"code": code, "value": value}])
+
+    async def _send_many(self, commands):
         try:
-            await self.hass.async_add_executor_job(self.api.send, code, value)
+            await self.hass.async_add_executor_job(self.api.send_many, commands)
         except TuyaOfflineError as err:
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="device_offline"
@@ -217,8 +266,8 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
             raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_request_refresh()
 
-    async def _run(self, command, action):
-        if command is None:
+    async def _run(self, commands, action):
+        if not commands:
             raise HomeAssistantError(
                 translation_domain=DOMAIN, translation_key="command_unsupported",
                 translation_placeholders={
@@ -226,9 +275,21 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
                     "device": self.api.device.get("product_name") or "this vacuum",
                 },
             )
-        await self._send(*command)
+        await self._send_many(commands)
+
+    @property
+    def _is_paused(self):
+        data = self.coordinator.data or {}
+        if data.get(TUYA_DP_PAUSE) is True:
+            return True
+        return str(data.get(TUYA_DP_STATUS) or "").lower() in TUYA_STATUS_PAUSED
 
     async def async_start(self):
+        # Resuming a paused clean must not restart it from scratch, which asking for
+        # the full-clean mode again would do.
+        if self._is_paused and self._cmd_resume:
+            await self._send_many(self._cmd_resume)
+            return
         await self._run(self._cmd_start, "start")
 
     async def async_pause(self):

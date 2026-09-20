@@ -69,6 +69,15 @@ each model gets exactly the controls it advertises and nothing it does not. Only
 devices Tuya files under the **robot vacuum** category are set up — the rest of the
 linked Tuya account (lamps, plugs, cameras…) is left alone.
 
+Two things worth knowing about how these robots take orders:
+
+- **Start means "clean the place."** It asks for the full-clean mode, the run flag and
+  the pause flag in a single instruction, because ILIFE firmware ignores the run flag
+  on its own. Pressing start on a *paused* vacuum resumes it instead of restarting.
+- **The Cleaning mode select is a command, not a setting.** Choosing *zone*, *spot* or
+  *edge* tells the robot to go and do that now — it is how you ask for anything other
+  than a full clean.
+
 ## Installation (HACS)
 
 1. HACS → search **ILIFE Vacuum** → **Download** (or add this repo as a custom repository, type *Integration*).
