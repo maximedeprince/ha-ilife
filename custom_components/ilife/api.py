@@ -47,6 +47,10 @@ REGIONS = {
 }
 DEFAULT_REGION = "eu"
 STATUS_TTL = 45  # seconds; shared online-status cache at account level
+# `/uc/listBindingByAccount` is paged. It is documented to take pageNo/pageSize, and
+# what an omitted page means is left to the tenant — so the call asks explicitly (#26).
+DEVICE_PAGE_SIZE = 100
+DEVICE_PAGE_LIMIT = 10  # stop rather than loop forever if a tenant ignores paging
 
 
 class ILifeError(Exception):
@@ -226,6 +230,7 @@ class ILifeAccount:
         self.token: str | None = None
         self._lock = threading.Lock()
         self._status: dict[str, bool] = {}
+        self._warned_empty = False
         self._status_ts = 0.0
 
     # --- auth ---
@@ -293,11 +298,44 @@ class ILifeAccount:
             return self._iot(path, d, api_ver, _retry=False)
         return r
 
+    def _list_bindings(self) -> list[dict]:
+        """Every device bound to this account, following the endpoint's pagination.
+
+        Asking for a page explicitly is both the documented call and the only way to
+        see past the first one. An account whose robot sits behind a full page of
+        other devices would otherwise never be told about it.
+        """
+        out: list[dict] = []
+        for page in range(1, DEVICE_PAGE_LIMIT + 1):
+            r = self._iot("/uc/listBindingByAccount",
+                          {"pageNo": page, "pageSize": DEVICE_PAGE_SIZE}, _retry=False)
+            if r.get("code") != 200:
+                _LOGGER.debug("ILIFE listBindingByAccount page %s: %s", page, r)
+                break
+            batch = (r.get("data") or {}).get("data") or []
+            if not batch:
+                # This is what users report as "no device bound" with nothing to go on,
+                # because the reply was never logged. Now it is (#26).
+                # Once per session: device_status() comes back through here every
+                # STATUS_TTL seconds, and a warning on every poll is not a diagnostic.
+                if page == 1 and not self._warned_empty:
+                    self._warned_empty = True
+                    _LOGGER.warning(
+                        "ILIFE: login succeeded but the account lists no bound device. "
+                        "Raw listBindingByAccount reply: %s", r)
+                break
+            out.extend(batch)
+            if len(batch) < DEVICE_PAGE_SIZE:
+                break
+        return out
+
     def list_devices(self) -> list[dict]:
-        r = self._iot("/uc/listBindingByAccount", {}, _retry=False)
-        devs = (r.get("data") or {}).get("data") or []
+        devs = self._list_bindings()
         if not devs:
-            raise ILifeError("no device bound to this account")
+            raise ILifeError(
+                "no device bound to this account — the robot is visible to the app but "
+                "not bound to this account itself, which is what a device shared from "
+                "someone else's home looks like here")
         # refresh the shared status cache while we have the list
         self._status = {dv.get("iotId"): dv.get("status") == 1 for dv in devs}
         self._status_ts = time.monotonic()
@@ -307,10 +345,9 @@ class ILifeAccount:
         """{iotId: online} — cached ~STATUS_TTL s, one call for all devices."""
         if time.monotonic() - self._status_ts < STATUS_TTL and self._status:
             return self._status
-        r = self._iot("/uc/listBindingByAccount", {}, _retry=False)
-        if r.get("code") == 200:
-            self._status = {dv.get("iotId"): dv.get("status") == 1
-                            for dv in (r.get("data") or {}).get("data") or []}
+        devs = self._list_bindings()
+        if devs:
+            self._status = {dv.get("iotId"): dv.get("status") == 1 for dv in devs}
             self._status_ts = time.monotonic()
         return self._status
 

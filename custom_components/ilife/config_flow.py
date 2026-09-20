@@ -75,7 +75,9 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.warning("ILIFE authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
             except ILifeError as err:
-                _LOGGER.debug("ILIFEHOME cannot_connect: %s", err)
+                # warning, not debug: this is the message the user is asked to report,
+                # and at debug level it is absent from exactly the logs they attach.
+                _LOGGER.warning("ILIFEHOME cannot_connect: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected ILIFEHOME login error")
