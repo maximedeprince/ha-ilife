@@ -8,10 +8,17 @@ shows the actual keys and values the device reports.
 
 Credentials and account/device identifiers are redacted before the file is
 written, so it is safe to share.
+
+On ILIFE Clean the dump also probes Tuya's separate realtime-map API, because
+"the map is blank" is otherwise indistinguishable from "this account cannot reach
+the map API at all". It reports what came back — sizes, checksums, the 24-byte
+header, and what the decoder made of it — but never the map body itself: that is
+the home's floor plan, and this file is routinely attached to public issues.
 """
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -21,6 +28,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_UID, DOMAIN
+from .tuya_api import TuyaError
+from .tuya_map import decode_tuya_map
 
 # Keys whose values are removed from the dump wherever they appear (recursively).
 # Credentials plus the identifiers that tie the account/device to a real person.
@@ -85,12 +94,99 @@ def _device_diag(coordinator: Any) -> dict[str, Any]:
     return diag
 
 
+def _describe_map_file(item: dict[str, Any]) -> dict[str, Any]:
+    """Describe one map file without reproducing it.
+
+    The floor plan lives in the LZ4 block after byte 24. The header in front of it
+    does not describe a home, only the grid: version, id, size, resolution and dock
+    position. That is what decides whether this model's map is supported, so it is
+    the part worth shipping — alongside what the decoder actually managed to read.
+    """
+    payload = item.get("payload") or b""
+    described = {
+        "map_type": item.get("map_type"),
+        "role": item.get("role"),
+        "source": item.get("source"),
+        "record_id": item.get("record_id"),
+        "record_time": item.get("record_time"),
+        "filename": item.get("filename"),
+        "size": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "header_hex": payload[:24].hex(),
+    }
+    if item.get("map_type") != 0:
+        return described
+    try:
+        decoded = decode_tuya_map(payload)
+    except Exception as err:  # noqa: BLE001
+        # The whole point of the probe: name what the decoder choked on, by type,
+        # so an unsupported map version reads as such instead of as a blank card.
+        described["decode"] = {
+            "success": False,
+            "error": f"{type(err).__name__}: {err}",
+        }
+        return described
+    header = decoded["header"]
+    described["decode"] = {
+        "success": True,
+        "map_version": header["version"],
+        "map_id": header["map_id"],
+        "width": header["width"],
+        "height": header["height"],
+        "resolution_cm": header["resolution_cm"],
+        "room_count": len(decoded["rooms"]),
+        "room_areas_m2": decoded["room_areas_m2"],
+        "path_points": len(decoded["path_points"]),
+        "virtual_walls": len(decoded["virtual_walls"]),
+        "no_go_zones": len(decoded["no_go_zones"]),
+        "embedded_commands": decoded["embedded_commands"],
+    }
+    return described
+
+
+async def _async_device_diag(
+    hass: HomeAssistant, coordinator: Any
+) -> dict[str, Any]:
+    """Build one device dump and probe Tuya's separate realtime-map API on demand."""
+    diag = _device_diag(coordinator)
+    fetch = getattr(coordinator.api, "realtime_map_files", None)
+    if fetch is None:
+        return diag
+
+    try:
+        files = await hass.async_add_executor_job(fetch)
+    except TuyaError as err:
+        diag["realtime_map_probe"] = {"success": False, "error": str(err)}
+        return diag
+    except Exception as err:  # noqa: BLE001
+        diag["realtime_map_probe"] = {
+            "success": False,
+            "error": f"unexpected map probe error: {err}",
+        }
+        return diag
+
+    described = [_describe_map_file(item) for item in files]
+    diag["realtime_map_probe"] = {
+        "success": True,
+        "note": (
+            "The map body is deliberately not included: it is the home's floor plan "
+            "and this file is meant to be shareable. What is here says whether the "
+            "map arrived and whether the decoder understood it."
+        ),
+        "files": described,
+    }
+    return diag
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for the whole account (every bound vacuum)."""
     store = hass.data.get(DOMAIN, {}).get(entry.entry_id) or {}
     coordinators = (store.get("coordinators") or {}).values()
+    devices = []
+    for coordinator in coordinators:
+        devices.append(await _async_device_diag(hass, coordinator))
     return {
         "entry": {
             "backend": store.get("backend") or entry.data.get("backend"),
@@ -98,7 +194,7 @@ async def async_get_config_entry_diagnostics(
             "options": async_redact_data(dict(entry.options), TO_REDACT),
         },
         "device_count": len(coordinators),
-        "devices": [_device_diag(c) for c in coordinators],
+        "devices": devices,
     }
 
 
@@ -111,5 +207,5 @@ async def async_get_device_diagnostics(
     ids = {ident for (dom, ident) in device.identifiers if dom == DOMAIN}
     for device_key, coordinator in coordinators.items():
         if device_key in ids:
-            return _device_diag(coordinator)
+            return await _async_device_diag(hass, coordinator)
     return {"error": "device not found in this config entry"}

@@ -124,7 +124,8 @@ class IlifeVacuumCard extends HTMLElement {
     const dom = (id) => id.split(".")[0];
     const e = { vacuum: cfgEnt || null, map: null, water: null, mode: null, carpet: null,
       battery: null, history: null, online: null, brush: null, side: null, filter: null,
-      curarea: null, curtime: null, buttons: {}, schedules: {} };
+      curarea: null, curtime: null, totalarea: null, totaltime: null, totalcount: null,
+      buttons: {}, schedules: {} };
     for (const id of ids) {
       const d = dom(id), k = tk(id);
       if (d === "vacuum") { if (!e.vacuum) e.vacuum = id; }
@@ -149,6 +150,9 @@ class IlifeVacuumCard extends HTMLElement {
         else if (k === "filter") e.filter = id;
         else if (k === "current_area") e.curarea = id;
         else if (k === "current_time") e.curtime = id;
+        else if (k === "total_area") e.totalarea = id;
+        else if (k === "total_time") e.totaltime = id;
+        else if (k === "total_count") e.totalcount = id;
       }
     }
     return e;
@@ -670,7 +674,12 @@ class IlifeVacuumCard extends HTMLElement {
       } else q("batt").hidden = true;
     }
 
-    if (q("badgetxt")) q("badgetxt").textContent = (!online && e.online) ? t.sleeping : t.live;
+    if (q("badgetxt")) {
+      const source = e.map ? hass.states[e.map]?.attributes.map_source : null;
+      q("badgetxt").textContent = (!online && e.online)
+        ? t.sleeping
+        : (vs.state === "cleaning" && source === "realtime" ? t.live : t.last_run);
+    }
 
     if (q("scrim")) {
       if (vs.state === "cleaning") {
@@ -701,7 +710,19 @@ class IlifeVacuumCard extends HTMLElement {
     if (e.carpet && q("carpet")) { const cs = hass.states[e.carpet]; if (document.activeElement !== q("carpet")) q("carpet").checked = cs && cs.state === "on"; }
 
     const cleans = (e.history && hass.states[e.history]?.attributes.cleans) || [];
-    const cycles = cleans.length;
+    const sensorCycles = e.totalcount ? num(e.totalcount) : null;
+    const sensorArea = e.totalarea ? num(e.totalarea) : null;
+    const sensorMinutes = e.totaltime ? num(e.totaltime) : null;
+    const attrNum = (key) => {
+      const value = Number(vs.attributes[key]);
+      return Number.isFinite(value) ? value : null;
+    };
+    const directCycles = attrNum("total_clean_count");
+    const directArea = attrNum("total_clean_area");
+    const directMinutes = attrNum("total_clean_time");
+    const cycles = sensorCycles != null
+      ? sensorCycles
+      : (directCycles != null ? directCycles : cleans.length);
 
     // Hero map: live camera while cleaning, otherwise the last completed clean's full map
     const img = q("map"), hero = q("heromap");
@@ -719,8 +740,16 @@ class IlifeVacuumCard extends HTMLElement {
       }
       if (!usedHero) { this._heroCells = null; hero.hidden = true; img.hidden = false; }
     }
-    const totArea = cleans.reduce((s, c) => s + (Number(c.area) || 0), 0);
-    const totMin = cleans.reduce((s, c) => s + (Number(c.duration) || 0), 0);
+    const totArea = sensorArea != null
+      ? sensorArea
+      : (directArea != null
+        ? directArea
+        : cleans.reduce((s, c) => s + (Number(c.area) || 0), 0));
+    const totMin = sensorMinutes != null
+      ? sensorMinutes
+      : (directMinutes != null
+        ? directMinutes
+        : cleans.reduce((s, c) => s + (Number(c.duration) || 0), 0));
     const fmtDur = (m) => m >= 60 ? Math.floor(m / 60) + "h" + (m % 60 ? String(m % 60).padStart(2, "0") : "") : m + "min";
     const brush = e.brush ? num(e.brush) : null, side = e.side ? num(e.side) : null, filt = e.filter ? num(e.filter) : null;
     if (q("kpis")) {
@@ -761,7 +790,14 @@ class IlifeVacuumCard extends HTMLElement {
     this.querySelectorAll(".vc-stime").forEach((t2) => { const s = hass.states[t2.dataset.ent]; if (s && s.state && s.state.length >= 5 && document.activeElement !== t2) t2.value = s.state.slice(0, 5); });
   }
 
-  disconnectedCallback() { if (this._mapTimer) clearInterval(this._mapTimer); if (this._ro) this._ro.disconnect(); if (this._roMap) this._roMap.disconnect(); if (this._fitRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._fitRaf); }
+  connectedCallback() { if (this._built && !this._mapTimer) this._startMapTimer(); }
+  disconnectedCallback() {
+    if (this._mapTimer) clearInterval(this._mapTimer);
+    this._mapTimer = null;
+    if (this._ro) this._ro.disconnect();
+    if (this._roMap) this._roMap.disconnect();
+    if (this._fitRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._fitRaf);
+  }
 }
 if (!customElements.get("ilife-vacuum-card")) customElements.define("ilife-vacuum-card", IlifeVacuumCard);
 
@@ -792,4 +828,4 @@ if (!customElements.get("ilife-vacuum-card-editor")) customElements.define("ilif
 window.customCards = window.customCards || [];
 window.customCards.push({ type: "ilife-vacuum-card", name: "ILIFE Vacuum Card",
   description: "All-in-one card for the ILIFE vacuum (map, controls, schedules, clickable history).", preview: true });
-console.info("%c ILIFE-VACUUM-CARD %c loaded ", "color:#fff;background:#7cadff;border-radius:3px 0 0 3px;padding:2px", "background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px");
+console.info("%c ILIFE-VACUUM-CARD %c 0.7.0 loaded ", "color:#fff;background:#7cadff;border-radius:3px 0 0 3px;padding:2px", "background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px");

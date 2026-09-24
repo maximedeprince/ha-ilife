@@ -88,7 +88,11 @@ TUYA_DP_BATTERY = "electricity_left"
 TUYA_DP_LOCATE = "seek"
 TUYA_DP_CLEAN_AREA = "clean_area"
 TUYA_DP_CLEAN_TIME = "clean_time"
+TUYA_DP_TOTAL_CLEAN_AREA = "total_clean_area"
+TUYA_DP_TOTAL_CLEAN_TIME = "total_clean_time"
+TUYA_DP_TOTAL_CLEAN_COUNT = "total_clean_count"
 TUYA_DP_CLEAN_RECORD = "clean_record"
+TUYA_DP_REQUEST = "request"
 TUYA_DP_FAULT = "fault"
 TUYA_DP_MODE = "mode"
 TUYA_DP_SUCTION = "suction"
@@ -113,7 +117,7 @@ TUYA_STATUS_DOCKED = {"charging", "charge_done", "chargecompleted", "standby_cha
 TUYA_STATUS_RETURNING = {"goto_charge", "docking", "back_charge"}
 TUYA_STATUS_IDLE = {"standby", "sleep"}
 TUYA_STATUS_PAUSED = {"pause", "paused"}
-TUYA_STATUS_CLEANING = {"cleaning", "smart_clean", "zone_clean", "part_clean",
+TUYA_STATUS_CLEANING = {"cleaning", "smart", "smart_clean", "zone_clean", "part_clean",
                         "spot_clean", "selectroom_clean", "mop_clean", "goto_pos",
                         "pos_arrived", "pos_unarrive", "curpoint_clean"}
 
@@ -123,5 +127,6 @@ TUYA_STATUS_CLEANING = {"cleaning", "smart_clean", "zone_clean", "part_clean",
 TUYA_KNOWN_DP_CODES = {
     TUYA_DP_SWITCH, TUYA_DP_POWER_GO, TUYA_DP_STATUS, TUYA_DP_PAUSE, TUYA_DP_RETURN_HOME,
     TUYA_DP_BATTERY, TUYA_DP_LOCATE, TUYA_DP_CLEAN_AREA, TUYA_DP_CLEAN_TIME,
+    TUYA_DP_TOTAL_CLEAN_AREA, TUYA_DP_TOTAL_CLEAN_TIME, TUYA_DP_TOTAL_CLEAN_COUNT,
     TUYA_DP_CLEAN_RECORD, TUYA_DP_FAULT, TUYA_DP_MODE, TUYA_DP_SUCTION, TUYA_DP_CISTERN,
 }

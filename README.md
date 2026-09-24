@@ -10,7 +10,8 @@ Custom Home Assistant integration for ILIFE robot vacuums.
   directly, no Tuya, no MQTT broker to set up. Tested with the **ILIFE V3x**.
 - **ILIFE Clean** app (Tuya cloud) — used by newer models. The T20s pairs
   via a `SmartLife-XXXX` Wi-Fi hotspot and the app itself documents linking
-  through the Smart Life/Tuya ecosystem. Tested with the **ILIFE T20s**.
+  through the Smart Life/Tuya ecosystem. Tested with the **ILIFE T20s**, the
+  **A30 Pro** and the **V20** (the V20 also renders a live map).
 
 <p align="center">
   <img src="docs/screenshot-1.png" width="300" alt="Card — status, map and controls">
@@ -63,6 +64,9 @@ back the four fields and the brand ships.
 - 🔋 Battery, current cleaning area/time, fault status, connectivity (online/offline)
 - 🧭 Cleaning mode and water level selects, if supported by the device
 - 🔀 Mop/self-empty toggles, consumables, and every other metric the device reports
+- 🗺️ Live map camera on laser models that publish one — see
+  [The map on ILIFE Clean](#the-map-on-ilife-clean)
+- 📊 Lifetime totals (area, time, number of cleanings) where the device reports them
 
 Everything above is derived from the device's own live `/specifications` response, so
 each model gets exactly the controls it advertises and nothing it does not. Only
@@ -92,9 +96,11 @@ in the visual editor. Everything else (map, sensors, schedules…) is detected
 automatically. No YAML needed.
 
 The card shows the sections its entities exist for, so it is deliberately smaller on
-the **ILIFE Clean** backend: Tuya exposes no map image and no cleaning history for
-these vacuums, so the map tile, the history list and the schedule editor are not
-drawn. Controls, battery, current clean and the settings the device advertises are.
+the **ILIFE Clean** backend: Tuya has no cleaning-history or schedule endpoint for
+these vacuums, so the history list and the schedule editor are not drawn. Controls,
+battery, current clean, lifetime totals and the settings the device advertises are.
+The map tile appears only on models that publish one — see
+[The map on ILIFE Clean](#the-map-on-ilife-clean).
 
 The card is registered automatically for storage‑mode dashboards. For
 **YAML‑mode** dashboards, add the resource manually:
@@ -124,7 +130,10 @@ the same one-time step used by other Tuya-based integrations (e.g.
    center, so if Central Europe fails, try Western Europe.
 2. Subscribe the project to the **IoT Core** / **Authorization** / **Smart
    Home Basic Service** API groups (Tuya prompts for this during project
-   creation, free tier).
+   creation, free tier). If you want the map, also authorize **Robot Vacuum
+   Open APIs** under the project's **Service API** tab — it is free, it is not
+   subscribed by default, and the map lives behind it. Everything else works
+   without it.
 3. On the project's **Overview** tab, copy the **Access ID (Client ID)** and
    **Access Secret (Client Secret)**.
 4. **Move the vacuum to the Tuya Smart app.** The ILIFE Clean app has no
@@ -216,6 +225,40 @@ the problem is on the way out to Tuya's cloud (DNS filtering, IoT VLAN,
 firewall) — a different fix entirely. If it never appears, it never associated,
 and the list above is where to look.
 
+## The map on ILIFE Clean
+
+Tuya does publish a map for these vacuums, but not through the API the rest of
+the integration uses. It lives behind a separate service, in a binary format, and
+only the laser-navigation models produce one at all. That combination is why this
+was documented as impossible for a while: on a model with no laser there is
+genuinely nothing to fetch, and on one with a laser the fetch fails silently
+unless the Cloud Project is authorized for it.
+
+**What it needs:**
+
+1. A laser model that maps. Confirmed on the **ILIFE V20** (contributed and
+   tested in [#28](https://github.com/maximedeprince/ha-ilife/issues/28)). The
+   gyroscopic models do not publish a map — the **A30 Pro** and **T20s** both
+   advertise a `request`/`path_data` data point and never put anything in it.
+2. **Robot Vacuum Open APIs** authorized on your Tuya Cloud Project
+   (**Cloud → your project → Service API → Go to Authorize**). Free, and not
+   enabled by default.
+
+With both, you get a `camera.<vacuum>_map` entity: rooms in colour with their
+names and areas, the cleaning path, the dock, the robot, virtual walls and no-go
+zones. The card picks it up on its own. It refreshes every 30 seconds while the
+robot is cleaning and every 5 minutes otherwise.
+
+**If the map stays unavailable**, the entity's `map_last_error` attribute says
+why, and the first failure is logged as a warning. `1106` there means the Robot
+Vacuum service is not authorized — that is step 2 above. "No layout map returned"
+means the authorization is fine and this model simply does not publish one; the
+integration then backs off rather than polling a map that is never coming.
+
+**On zone and room cleaning:** the map is read-only for now. The decoder reads
+room ids, names and polygons, so sending the robot to a named room is a realistic
+next step, but it is not implemented and I would rather say so than imply it.
+
 ## 🙏 Help wanted — testers for other ILIFE models
 
 The code is written to be generic, so other 3irobotix‑based ILIFE vacuums have a
@@ -242,8 +285,13 @@ logger:
 For map or model‑specific problems, the fastest way to help is the diagnostics
 file. Go to **Settings → Devices & Services → ILIFE Vacuum → ⋮ → Download
 diagnostics** (there is also a per‑device button). It contains the raw property
-payload each vacuum reports — including the map data — with your email, password
-and device IDs **redacted**. Attach it to the issue.
+payload each vacuum reports, with your email, password and device IDs
+**redacted**. Attach it to the issue.
+
+On ILIFE Clean it also probes the map API and reports what came back: whether the
+map arrived, its header, and what the decoder made of it — the room count and
+areas, not the rooms' names, and never the map itself. Your floor plan stays on
+your machine, so the file is safe to post publicly.
 
 ### Removing an old device
 

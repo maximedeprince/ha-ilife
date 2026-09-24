@@ -82,6 +82,15 @@
       "current_time": {
         "name": "Durée en cours"
       },
+      "total_area": {
+        "name": "Surface totale nettoyée"
+      },
+      "total_time": {
+        "name": "Durée totale de nettoyage"
+      },
+      "total_count": {
+        "name": "Nombre total de nettoyages"
+      },
       "last_area": {
         "name": "Dernière surface"
       },

@@ -26,6 +26,9 @@ from .const import (
     TUYA_DP_STATUS,
     TUYA_DP_SUCTION,
     TUYA_DP_SWITCH,
+    TUYA_DP_TOTAL_CLEAN_AREA,
+    TUYA_DP_TOTAL_CLEAN_COUNT,
+    TUYA_DP_TOTAL_CLEAN_TIME,
     TUYA_MODE_FULL_CLEAN,
     TUYA_STATUS_CLEANING,
     TUYA_STATUS_DOCKED,
@@ -249,8 +252,20 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
 
     @property
     def extra_state_attributes(self):
-        fault = (self.coordinator.data or {}).get(TUYA_DP_FAULT)
-        return {"fault": fault} if fault else {}
+        data = self.coordinator.data or {}
+        attrs = {}
+        fault = data.get(TUYA_DP_FAULT)
+        if fault:
+            attrs["fault"] = fault
+        for key, code in (
+            ("total_clean_count", TUYA_DP_TOTAL_CLEAN_COUNT),
+            ("total_clean_area", TUYA_DP_TOTAL_CLEAN_AREA),
+            ("total_clean_time", TUYA_DP_TOTAL_CLEAN_TIME),
+        ):
+            value = data.get(code)
+            if value is not None:
+                attrs[key] = value
+        return attrs
 
     async def _send(self, code, value):
         await self._send_many([{"code": code, "value": value}])

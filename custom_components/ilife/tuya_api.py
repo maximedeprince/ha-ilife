@@ -24,6 +24,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os.path
 import time
 import urllib.error
 import urllib.parse
@@ -59,6 +60,7 @@ TUYA_REGION_LABELS = {
 DEFAULT_TUYA_REGION = "eu"
 
 TOKEN_TTL_SAFETY = 60  # seconds; refresh this long before actual expiry
+MAX_MAP_FILE_SIZE = 8 * 1024 * 1024
 
 
 class TuyaError(Exception):
@@ -291,6 +293,100 @@ class TuyaClient:
             raise
         return True
 
+    def realtime_map_files(self, device_id: str) -> list[dict]:
+        """Download current or latest stored map files without exposing signed URLs."""
+        self.authenticate()
+        endpoint = (
+            f"/v1.0/users/sweepers/file/{urllib.parse.quote(device_id, safe='')}/realtime-map"
+        )
+        try:
+            links = self._call("GET", endpoint) or []
+        except TuyaError as err:
+            if err.code == 1106:
+                raise TuyaError(
+                    f"{err}. For map access, also authorize the Robot Vacuum Open APIs "
+                    "service for this Tuya Cloud Project",
+                    err.code,
+                ) from err
+            raise
+        if not isinstance(links, list):
+            raise TuyaError("unexpected realtime-map response: result is not a list")
+
+        source = "realtime"
+        record = None
+        if not links:
+            params = urllib.parse.urlencode({
+                "file_type": "pic", "page_no": 1, "page_size": 5,
+            })
+            listing_endpoint = (
+                f"/v1.0/users/sweepers/file/{urllib.parse.quote(device_id, safe='')}/list"
+                f"?{params}"
+            )
+            listing = self._call("GET", listing_endpoint) or {}
+            records = listing.get("datas") or [] if isinstance(listing, dict) else []
+            records = [item for item in records if isinstance(item, dict) and item.get("id")]
+            if not records:
+                return []
+
+            def _record_time(item):
+                try:
+                    return int(item.get("time") or 0)
+                except (TypeError, ValueError):
+                    return 0
+
+            record = max(records, key=_record_time)
+            download_endpoint = (
+                f"/v1.0/users/sweepers/file/{urllib.parse.quote(device_id, safe='')}/download"
+                f"?{urllib.parse.urlencode({'id': record['id']})}"
+            )
+            download = self._call("GET", download_endpoint) or {}
+            if not isinstance(download, dict):
+                raise TuyaError("unexpected map download response: result is not an object")
+            links = [
+                {"map_type": map_type, "map_url": download.get(role), "role": role}
+                for role, map_type in (("app_map", 0), ("robot_map", 1))
+                if download.get(role)
+            ]
+            source = "stored"
+
+        files = []
+        for item in links:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("map_url")
+            if not isinstance(url, str) or not url:
+                continue
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise TuyaError("realtime-map returned a non-HTTPS download URL")
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "HomeAssistant/ILIFE",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    payload = response.read(MAX_MAP_FILE_SIZE + 1)
+            except (urllib.error.HTTPError, urllib.error.URLError) as err:
+                raise TuyaError(f"map file download failed: {err}") from err
+            if len(payload) > MAX_MAP_FILE_SIZE:
+                raise TuyaError(
+                    f"map file exceeds the {MAX_MAP_FILE_SIZE}-byte diagnostic limit"
+                )
+            files.append({
+                "map_type": item.get("map_type"),
+                "role": item.get("role"),
+                "source": source,
+                "record_id": record.get("id") if record else None,
+                "record_time": record.get("time") if record else None,
+                "filename": os.path.basename(urllib.parse.unquote(parsed.path)) or None,
+                "payload": payload,
+            })
+        return files
+
 
 class TuyaVacuum:
     """One bound device, addressed via a TuyaClient. Mirrors api.ILifeDevice's role."""
@@ -311,3 +407,7 @@ class TuyaVacuum:
 
     def send_many(self, commands: list[dict]) -> bool:
         return self.client.send_commands(self.device_id, commands)
+
+    def realtime_map_files(self) -> list[dict]:
+        """Return the current layout/path files from Tuya's sweeper cloud API."""
+        return self.client.realtime_map_files(self.device_id)
