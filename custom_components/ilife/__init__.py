@@ -56,11 +56,22 @@ ILIFE_CLEAN_PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.SELECT,
     Platform.SWITCH,
+    Platform.CAMERA,
 ]
 PLATFORMS = ILIFEHOME_PLATFORMS
 
 CARD_URL = "/ilife_cards/ilife-vacuum-card.js"
 CARD_FILENAME = "ilife-vacuum-card.js"
+
+
+def _is_ilife_card_resource(url: str) -> bool:
+    """Recognize both current and legacy/manual ILIFE card resource URLs."""
+    base = str(url or "").split("?", 1)[0].rstrip("/")
+    return (
+        base == CARD_URL
+        or base.endswith("/ilife-vacuum-card.js")
+        or base.startswith("/ilife_cards/ilife-vacuum-card-")
+    )
 
 
 class ILifeCoordinator(DataUpdateCoordinator):
@@ -358,14 +369,25 @@ async def _async_register_card_resource(hass: HomeAssistant) -> None:
         pass
     want = f"{CARD_URL}?v={version}"
     existing = [r for r in resources.async_items()
-                if str(r.get("url", "")).split("?")[0] == CARD_URL]
+                if _is_ilife_card_resource(r.get("url", ""))]
     try:
         if not existing:
             await resources.async_create_item({"res_type": "module", "url": want})
             _LOGGER.info("ILIFE: Lovelace card resource added (%s)", want)
-        elif existing[0].get("url") != want:
-            await resources.async_update_item(existing[0]["id"], {"res_type": "module", "url": want})
-            _LOGGER.info("ILIFE: Lovelace card resource updated to %s", want)
+        else:
+            primary = existing[0]
+            if primary.get("url") != want:
+                await resources.async_update_item(
+                    primary["id"], {"res_type": "module", "url": want}
+                )
+                _LOGGER.info("ILIFE: Lovelace card resource updated to %s", want)
+            for duplicate in existing[1:]:
+                if hasattr(resources, "async_delete_item"):
+                    await resources.async_delete_item(duplicate["id"])
+                elif duplicate.get("url") != want:
+                    await resources.async_update_item(
+                        duplicate["id"], {"res_type": "module", "url": want}
+                    )
     except Exception:  # noqa: BLE001
         # Loud on purpose: a silent failure here leaves the user with no card in the
         # picker and nothing to go on, which is how #23 was spent.

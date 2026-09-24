@@ -30,6 +30,9 @@ from .const import (
     TUYA_DP_CLEAN_AREA,
     TUYA_DP_CLEAN_TIME,
     TUYA_DP_FAULT,
+    TUYA_DP_TOTAL_CLEAN_AREA,
+    TUYA_DP_TOTAL_CLEAN_COUNT,
+    TUYA_DP_TOTAL_CLEAN_TIME,
 )
 from .entity import ILifeEntity
 from .tuya_dynamic import status_types, unknown_status_values
@@ -107,6 +110,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
                                            "mdi:timer-play-outline", UnitOfTime.MINUTES,
                                            SensorStateClass.MEASUREMENT, TUYA_DP_CLEAN_TIME,
                                            None))
+            if TUYA_DP_TOTAL_CLEAN_AREA in status:
+                entities.append(TuyaSensor(coordinator, "total_area", "mdi:ruler-square",
+                                           UnitOfArea.SQUARE_METERS,
+                                           SensorStateClass.TOTAL_INCREASING,
+                                           TUYA_DP_TOTAL_CLEAN_AREA, None))
+            if TUYA_DP_TOTAL_CLEAN_TIME in status:
+                entities.append(TuyaSensor(coordinator, "total_time", "mdi:timer-outline",
+                                           UnitOfTime.MINUTES,
+                                           SensorStateClass.TOTAL_INCREASING,
+                                           TUYA_DP_TOTAL_CLEAN_TIME, None))
+            if TUYA_DP_TOTAL_CLEAN_COUNT in status:
+                entities.append(TuyaSensor(coordinator, "total_count", "mdi:counter",
+                                           None, SensorStateClass.TOTAL_INCREASING,
+                                           TUYA_DP_TOTAL_CLEAN_COUNT, None))
             if TUYA_DP_FAULT in status:
                 entities.append(TuyaSensor(coordinator, "fault", "mdi:alert-circle-outline",
                                            None, None, TUYA_DP_FAULT, None))

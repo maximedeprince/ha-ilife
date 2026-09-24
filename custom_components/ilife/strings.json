@@ -82,6 +82,15 @@
       "current_time": {
         "name": "Current duration"
       },
+      "total_area": {
+        "name": "Total cleaned area"
+      },
+      "total_time": {
+        "name": "Total cleaning time"
+      },
+      "total_count": {
+        "name": "Total cleanings"
+      },
       "last_area": {
         "name": "Last area"
       },
