@@ -1,12 +1,15 @@
 """ILIFE vacuum entity (ILIFEHOME) and ILIFE Clean (Tuya) vacuum entity."""
 from __future__ import annotations
 
+import voluptuous as vol
+
 from homeassistant.components.vacuum import (
     StateVacuumEntity,
     VacuumActivity,
     VacuumEntityFeature,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv, entity_platform
 
 from .api import ILifeError, ILifeOfflineError
 from .const import (
@@ -40,8 +43,37 @@ from .const import (
 )
 from .entity import ILifeEntity
 from .tuya_api import TuyaError, TuyaOfflineError
-from .tuya_dynamic import command_for, enum_command, range_values
+from .tuya_dynamic import command_for, enum_command
 from .tuya_entity import TuyaEntity
+from .tuya_rooms import CLEAN_ROOMS_CODE, MAX_PASSES, clean_rooms_value
+from .tuya_schedule import (
+    EMPTY_SLOT,
+    MAX_CYCLES,
+    SCHEDULE_CODES,
+    build_schedule,
+    parse_schedule,
+)
+
+
+SERVICE_CLEAN_ROOMS = "clean_rooms"
+CLEAN_ROOMS_SCHEMA = {
+    vol.Required("rooms"): vol.All(cv.ensure_list, [vol.Any(vol.Coerce(int), cv.string)]),
+    vol.Optional("passes", default=1): vol.All(vol.Coerce(int), vol.Range(1, MAX_PASSES)),
+}
+SERVICE_SET_SCHEDULE = "set_schedule"
+SERVICE_DELETE_SCHEDULE = "delete_schedule"
+_SLOT = vol.All(vol.Coerce(int), vol.Range(1, len(SCHEDULE_CODES)))
+SET_SCHEDULE_SCHEMA = {
+    # No slot: a new schedule in the first free one.
+    vol.Optional("slot"): _SLOT,
+    vol.Optional("time"): cv.string,
+    vol.Optional("days"): vol.All(cv.ensure_list, [vol.All(vol.Coerce(int), vol.Range(0, 6))]),
+    vol.Optional("enabled"): cv.boolean,
+    # [] = whole home; names as in the app, or room numbers.
+    vol.Optional("rooms"): vol.All(cv.ensure_list, [vol.Any(vol.Coerce(int), cv.string)]),
+    vol.Optional("cycles"): vol.All(vol.Coerce(int), vol.Range(1, MAX_CYCLES)),
+}
+DELETE_SCHEDULE_SCHEMA = {vol.Required("slot"): _SLOT}
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -50,6 +82,13 @@ async def async_setup_entry(hass, entry, async_add_entities):
         async_add_entities(TuyaVacuum(c) for c in data["coordinators"].values())
     else:
         async_add_entities(ILifeVacuum(c) for c in data["coordinators"].values())
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service(
+        SERVICE_CLEAN_ROOMS, CLEAN_ROOMS_SCHEMA, "async_clean_rooms")
+    platform.async_register_entity_service(
+        SERVICE_SET_SCHEDULE, SET_SCHEDULE_SCHEMA, "async_set_schedule")
+    platform.async_register_entity_service(
+        SERVICE_DELETE_SCHEDULE, DELETE_SCHEDULE_SCHEMA, "async_delete_schedule")
 
 
 class ILifeVacuum(ILifeEntity, StateVacuumEntity):
@@ -117,6 +156,21 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
             return
         cur = (self.coordinator.data or {}).get("VacWateState")
         await self._cmd(self.api.set_prop, "VacWateState", pack_vws(cur, suction=fan_speed), None, False)
+
+    def _unsupported(self, action):
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="command_unsupported",
+            translation_placeholders={"action": action, "device": "ILIFEHOME"},
+        )
+
+    async def async_clean_rooms(self, rooms, passes=1):
+        self._unsupported("clean rooms")
+
+    async def async_set_schedule(self, **kwargs):
+        self._unsupported("set schedule")
+
+    async def async_delete_schedule(self, slot):
+        self._unsupported("delete schedule")
 
 
 def _commands(*pairs):
@@ -200,7 +254,9 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         # Suction is the fan speed every ILIFE Clean model advertises; exposing it as
         # the vacuum's own fan_speed is what the Lovelace card (and HA's stock vacuum
         # card) drive, instead of a nameless generic select nothing knows about.
-        self._suction_range = [str(v) for v in range_values(functions, TUYA_DP_SUCTION)]
+        # The thing model may accept more than the spec (A30 Pro: "closed", for
+        # mopping only); coordinator.async_write routes those values accordingly.
+        self._suction_range = [str(v) for v in coordinator.enum_range(TUYA_DP_SUCTION)]
 
         features = VacuumEntityFeature.STATE
         if self._cmd_start:
@@ -250,8 +306,7 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         v = (self.coordinator.data or {}).get(TUYA_DP_SUCTION)
         return None if v is None else str(v)
 
-    @property
-    def extra_state_attributes(self):
+    def _tuya_attributes(self):
         data = self.coordinator.data or {}
         attrs = {}
         fault = data.get(TUYA_DP_FAULT)
@@ -266,9 +321,6 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
             if value is not None:
                 attrs[key] = value
         return attrs
-
-    async def _send(self, code, value):
-        await self._send_many([{"code": code, "value": value}])
 
     async def _send_many(self, commands):
         try:
@@ -328,4 +380,95 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
                     "options": ", ".join(self._suction_range) or "none",
                 },
             )
-        await self._send(TUYA_DP_SUCTION, fan_speed)
+        try:
+            await self.coordinator.async_write(TUYA_DP_SUCTION, fan_speed)
+        except TuyaOfflineError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="device_offline"
+            ) from err
+        except TuyaError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    @property
+    def extra_state_attributes(self):
+        attrs = self._tuya_attributes()
+        if self.coordinator.room_names:
+            attrs["rooms"] = self.coordinator.room_names
+        return attrs
+
+    def _room_id(self, room) -> int:
+        """A room given by id or by its name in the app (case-insensitive)."""
+        names = self.coordinator.room_names
+        if isinstance(room, int) or str(room).strip().isdigit():
+            return int(room)
+        wanted = str(room).strip().casefold()
+        for room_id, name in names.items():
+            if name.casefold() == wanted:
+                return room_id
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="room_unknown",
+            translation_placeholders={
+                "room": str(room),
+                "rooms": ", ".join(f"{name} ({room_id})" for room_id, name in
+                                   sorted(names.items())) or "none",
+            },
+        )
+
+    async def async_clean_rooms(self, rooms, passes=1):
+        """Clean the given rooms, each `passes` times (2 adds a crosswise pass)."""
+        if not self.coordinator.supports_room_clean:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="command_unsupported",
+                translation_placeholders={
+                    "action": "clean rooms",
+                    "device": self.api.device.get("product_name") or "this vacuum",
+                },
+            )
+        try:
+            value = clean_rooms_value([self._room_id(room) for room in rooms], passes)
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+        await self._write(CLEAN_ROOMS_CODE, value)
+
+    async def _write(self, code, value):
+        try:
+            await self.coordinator.async_write(code, value)
+        except TuyaOfflineError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="device_offline"
+            ) from err
+        except TuyaError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def async_set_schedule(self, slot=None, time=None, days=None, enabled=None,
+                                 rooms=None, cycles=None):
+        """Create a schedule (no slot) or change the given fields of one."""
+        properties = self.coordinator.properties
+        if not any(code in properties for code in SCHEDULE_CODES):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="command_unsupported",
+                translation_placeholders={
+                    "action": "set schedule",
+                    "device": self.api.device.get("product_name") or "this vacuum",
+                },
+            )
+        if slot is None:
+            slot = next((n for n, code in enumerate(SCHEDULE_CODES, start=1)
+                         if parse_schedule(properties.get(code)) is None), None)
+            if slot is None:
+                raise HomeAssistantError("all 7 schedule slots are in use")
+        code = SCHEDULE_CODES[slot - 1]
+        existing = properties.get(code)
+        if parse_schedule(existing) is None and (time is None or not days):
+            raise HomeAssistantError("a new schedule needs a time and at least one day")
+        try:
+            value = build_schedule(
+                existing, time=time, days=days, enabled=enabled, cycles=cycles,
+                rooms=None if rooms is None else [self._room_id(room) for room in rooms],
+            )
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+        await self._write(code, value)
+
+    async def async_delete_schedule(self, slot):
+        await self._write(SCHEDULE_CODES[slot - 1], EMPTY_SLOT)

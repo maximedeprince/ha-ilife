@@ -60,6 +60,9 @@
     },
     "fan_speed_unsupported": {
       "message": "\"{fan_speed}\" is not a suction level this vacuum accepts. Supported: {options}."
+    },
+    "room_unknown": {
+      "message": "\"{room}\" is not a room on this vacuum's map. Known rooms: {rooms}."
     }
   },
   "entity": {
@@ -105,11 +108,17 @@
       },
       "fault": {
         "name": "Fault"
+      },
+      "schedules": {
+        "name": "Schedules"
       }
     },
     "binary_sensor": {
       "online": {
         "name": "Online"
+      },
+      "problem": {
+        "name": "Problem"
       }
     },
     "select": {
@@ -118,6 +127,17 @@
       },
       "cleaning_mode": {
         "name": "Cleaning mode"
+      },
+      "cleaning_efficiency": {
+        "name": "Cleaning efficiency"
+      },
+      "cleaning_program": {
+        "name": "Cleaning program",
+        "state": {
+          "standard": "Standard",
+          "plan_1": "Plan 1",
+          "plan_2": "Plan 2"
+        }
       }
     },
     "switch": {
@@ -144,6 +164,21 @@
       },
       "schedule_7_enable": {
         "name": "Sunday schedule"
+      },
+      "y_mop": {
+        "name": "Y-shaped mopping"
+      },
+      "carpet_boost": {
+        "name": "Carpet boost"
+      },
+      "do_not_disturb": {
+        "name": "Do not disturb"
+      },
+      "resume_after_charge": {
+        "name": "Resume after charging"
+      },
+      "auto_empty": {
+        "name": "Auto-empty at dock"
       }
     },
     "time": {
@@ -201,6 +236,73 @@
       },
       "reset_filter": {
         "name": "Reset filter"
+      },
+      "reset_map": {
+        "name": "Reset map"
+      }
+    },
+    "number": {
+      "volume": {
+        "name": "Volume"
+      },
+      "auto_empty_frequency": {
+        "name": "Auto-empty frequency"
+      }
+    }
+  },
+  "services": {
+    "clean_rooms": {
+      "name": "Clean rooms",
+      "description": "Cleans only the given rooms (ILIFE Clean laser models).",
+      "fields": {
+        "rooms": {
+          "name": "Rooms",
+          "description": "Room names as in the app, or room numbers (the vacuum's 'rooms' attribute lists both)."
+        },
+        "passes": {
+          "name": "Passes",
+          "description": "1, or 2 to add a second, crosswise pass."
+        }
+      }
+    },
+    "set_schedule": {
+      "name": "Set schedule",
+      "description": "Creates a cleaning schedule, or changes the given fields of an existing one (ILIFE Clean laser models).",
+      "fields": {
+        "slot": {
+          "name": "Slot",
+          "description": "Schedule 1-7 to change; leave empty to create a new one."
+        },
+        "time": {
+          "name": "Time",
+          "description": "Start time."
+        },
+        "days": {
+          "name": "Days",
+          "description": "Weekdays, 0 = Monday .. 6 = Sunday."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether the schedule runs."
+        },
+        "rooms": {
+          "name": "Rooms",
+          "description": "Rooms to clean (names as in the app, or numbers); an empty list cleans the whole home."
+        },
+        "cycles": {
+          "name": "Cycles",
+          "description": "How many times to clean."
+        }
+      }
+    },
+    "delete_schedule": {
+      "name": "Delete schedule",
+      "description": "Removes a cleaning schedule.",
+      "fields": {
+        "slot": {
+          "name": "Slot",
+          "description": "Schedule 1-7 to remove."
+        }
       }
     }
   }

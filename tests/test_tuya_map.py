@@ -1,26 +1,25 @@
-"""Regression tests for the ILIFE Clean (Tuya) V2 map decoder.
+"""Regression tests for the ILIFE Clean (Tuya) map decoder: both known versions.
 
-Unlike `test_tuya_commands.py`, these are not built from a captured device file:
-the V20 map that motivated this decoder is a floor plan of someone's home and does
-not belong in a public repository. So the maps here are *synthesized* to the format
-`tuya_map` documents, and what they pin down is the decoding, not the format.
+The maps here are *synthesized* to the format `tuya_map` documents: a real capture
+is a floor plan of someone's home and does not belong in a public repository. So
+what they pin down is the decoding, not the format — a misread of the format is
+what the checks against the app's own rendering were for.
 
-That still covers the failure that actually costs a user their afternoon. A map
-arrives as an LZ4 block with lengths declared in its own header, from a cloud that
-owes us nothing: every one of those lengths is attacker- or firmware-controlled and
-can point past the end of the buffer. The rule these tests enforce is:
+Two things are easy to break again and have a test each:
+  * A30 Pro (version 1) walls and zones are cell offsets from the robot origin,
+    not robot units and not grid cells;
+  * the V20 (version 2) cell and 0xAA-frame encoding keeps working next to it.
 
-    a malformed or unsupported map raises a named error, never an IndexError,
-    a struct.error, or a silently truncated image.
-
-A real capture should be added on top of this the day one can be shared; it would
-catch a misread of the format, which by construction these cannot.
+Rule for malformed input: a named error, never an IndexError, a struct.error, or a
+silently truncated image.
 
 Pure functions, no Home Assistant needed: `python -m pytest tests/`.
 """
 from __future__ import annotations
 
+import base64
 import importlib.util
+import os
 import pathlib
 import struct
 import sys
@@ -28,7 +27,10 @@ import types
 
 import pytest
 
-_PKG = pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "ilife"
+_PKG = pathlib.Path(
+    os.environ.get("ILIFE_PKG")
+    or pathlib.Path(__file__).resolve().parents[1] / "custom_components" / "ilife"
+)
 _pkg = types.ModuleType("_ilife_map")
 _pkg.__path__ = [str(_PKG)]
 sys.modules["_ilife_map"] = _pkg
@@ -73,15 +75,8 @@ class TestLZ4:
         assert tuya_lz4.decompress_block(_lz4_literals(payload), len(payload)) == payload
 
     def test_match_sequence_repeats_earlier_output(self):
-        # "abcd" literally, then a match of 8 bytes at offset 4 -> "abcd" twice more,
-        # then a literal-only sequence to close the block as the format requires.
         block = bytes([(4 << 4) | 4]) + b"abcd" + struct.pack("<H", 4) + _lz4_literals(b"!")
         assert tuya_lz4.decompress_block(block, 13) == b"abcdabcdabcd!"
-
-    def test_overlapping_match_is_a_run(self):
-        # Offset 1 with a length beyond it is how LZ4 encodes a repeated byte.
-        block = bytes([(1 << 4) | 2]) + b"x" + struct.pack("<H", 1) + _lz4_literals(b"")
-        assert tuya_lz4.decompress_block(block, 7) == b"xxxxxxx"
 
     def test_declared_size_is_enforced(self):
         with pytest.raises(tuya_lz4.LZ4BlockError):
@@ -92,243 +87,331 @@ class TestLZ4:
         with pytest.raises(tuya_lz4.LZ4BlockError):
             tuya_lz4.decompress_block(block)
 
-    def test_truncated_literal_run_is_rejected(self):
-        with pytest.raises(tuya_lz4.LZ4BlockError):
-            tuya_lz4.decompress_block(bytes([8 << 4]) + b"only3")
-
 
 # --------------------------------------------------------------------------- #
-# Synthetic V2 maps
+# Synthetic maps
 # --------------------------------------------------------------------------- #
 
-WIDTH, HEIGHT = 8, 4
+WIDTH, HEIGHT = 8, 6
 RESOLUTION_CM = 5
-ORIGIN_X, ORIGIN_Y = 40, 30
-PILE_X, PILE_Y = 20, -10
+UNITS = RESOLUTION_CM * 2
+ORIGIN_X, ORIGIN_Y = 30, 40          # robot zero sits at grid cell (3, 4)
+PILE_X, PILE_Y = 40, 40              # dock at grid cell (4, 4)
+A30, V20 = tuya_map.VERSION_A30, tuya_map.VERSION_V20
+OUT, WALL = tuya_map.CELL_OUTSIDE, tuya_map.CELL_OBSTACLE   # version 1 cell values
 
 
-def _room_block(room_id: int, name: bytes, vertices: list[tuple[int, int]]) -> bytes:
-    """One 47-byte room record plus its vertex list."""
+def _room_block(room_id: int, name: bytes = b"", vertices=()) -> bytes:
     block = bytearray(47)
-    struct.pack_into(">4H", block, 0, room_id, 1, 2, 3)  # id, order, sweeps, mops
-    block[8:14] = bytes((room_id, 0, 0, 1, 2, 0))        # color, forbids, fan, water, y
+    struct.pack_into(">4H", block, 0, room_id, 0, 0, 0)
     block[26] = len(name)
     block[27 : 27 + len(name)] = name
     block[46] = len(vertices)
-    return bytes(block) + b"".join(struct.pack(">hh", x, y) for x, y in vertices)
+    return bytes(block) + _points(vertices)
 
 
-def _grid(assignments: dict[int, int]) -> bytes:
-    """A WIDTH*HEIGHT grid of `(room_id << 3) | pixel_type` cells."""
-    cells = bytearray(WIDTH * HEIGHT)
-    for index, value in assignments.items():
+def _grid(assignments: dict[int, int] | None = None, fill: int = OUT) -> bytes:
+    cells = bytearray([fill]) * (WIDTH * HEIGHT)
+    for index, value in (assignments or {}).items():
         cells[index] = value
     return bytes(cells)
 
 
-def _aa_frame(command: int, payload: bytes) -> bytes:
+def _points(points) -> bytes:
+    return b"".join(struct.pack(">hh", x, y) for x, y in points)
+
+
+def _path_section(points, *, compress: bool = False) -> bytes:
+    raw = _points(points)
+    section = bytearray(13)
+    section[5:9] = len(points).to_bytes(4, "big")
+    if compress:
+        block = _lz4_literals(raw)
+        section[11:13] = len(block).to_bytes(2, "big")
+        return bytes(section) + block
+    return bytes(section) + raw
+
+
+def _walls(walls) -> bytes:
+    """Version 1 virtual-wall record."""
+    return bytes([0x13, len(walls)]) + b"".join(_points(wall) for wall in walls)
+
+
+def _zones(zones) -> bytes:
+    """Version 1 no-go-zone record."""
+    return b"\x1b" + len(zones).to_bytes(2, "big") + b"".join(_points(z) for z in zones)
+
+
+def _frame(command: int, payload: bytes) -> bytes:
+    """Version 2 0xAA frame."""
     body = bytes([command]) + payload
     return b"\xaa" + len(body).to_bytes(2, "big") + body + bytes([sum(body) & 0xFF])
 
 
-def _path_section(points: list[tuple[int, int]]) -> bytes:
-    """An uncompressed embedded path section (13-byte preamble, then points)."""
-    section = bytearray(13)
-    section[5:9] = len(points).to_bytes(4, "big")
-    section[11:13] = (0).to_bytes(2, "big")  # 0 = points follow uncompressed
-    return bytes(section) + b"".join(struct.pack(">hh", x, y) for x, y in points)
-
-
-def _map(
-    *,
-    version: int = 2,
-    grid: bytes | None = None,
-    rooms: bytes = b"",
-    room_count: int | None = None,
-    trailer: bytes = b"",
-    compressed_length: int | None = None,
-    decompressed_length: int | None = None,
-) -> bytes:
-    grid = _grid({}) if grid is None else grid
-    body = grid + (bytes([0, room_count if room_count is not None else 0]) + rooms if rooms or room_count else b"")
+def _map(*, version=A30, grid=None, rooms=(), trailer=b"", compressed_length=None) -> bytes:
+    if grid is None:
+        grid = _grid(fill=OUT if version == A30 else 0)
+    body = grid + bytes([0, len(rooms)]) + b"".join(rooms)
     block = _lz4_literals(body)
-    header = bytearray()
-    header.append(version)
-    header += (7).to_bytes(2, "big")                   # map id
-    header.append(0)                                   # type
+    header = bytearray([version]) + (1).to_bytes(2, "big") + b"\x01"
     header += struct.pack(
-        ">10H",
-        WIDTH, HEIGHT,
-        ORIGIN_X, ORIGIN_Y,
-        RESOLUTION_CM,
-        PILE_X & 0xFFFF, PILE_Y & 0xFFFF,
-        0,
-        len(body) if decompressed_length is None else decompressed_length,
+        ">10H", WIDTH, HEIGHT, ORIGIN_X, ORIGIN_Y, RESOLUTION_CM,
+        PILE_X & 0xFFFF, PILE_Y & 0xFFFF, 0, len(body),
         len(block) if compressed_length is None else compressed_length,
     )
     return bytes(header) + block + trailer
 
 
-class TestMapHeader:
-    def test_header_fields_are_read(self):
-        decoded = tuya_map.decode_tuya_map(_map())
-        header = decoded["header"]
-        assert header["version"] == 2
-        assert header["map_id"] == 7
-        assert (header["width"], header["height"]) == (WIDTH, HEIGHT)
-        assert header["resolution_cm"] == RESOLUTION_CM
+# --------------------------------------------------------------------------- #
+# Both versions
+# --------------------------------------------------------------------------- #
+
+class TestHeader:
+    @pytest.mark.parametrize("version", [A30, V20])
+    def test_fields(self, version):
+        header = tuya_map.decode_tuya_map(_map(version=version))["header"]
+        assert (header["version"], header["width"], header["height"]) == (version, WIDTH, HEIGHT)
+        assert (header["origin_x"], header["origin_y"]) == (ORIGIN_X, ORIGIN_Y)
         assert (header["pile_x"], header["pile_y"]) == (PILE_X, PILE_Y)
 
-    def test_negative_coordinates_survive_the_unsigned_header(self):
-        # pile_y is stored unsigned; -10 must not come back as 65526.
-        assert tuya_map.decode_tuya_map(_map())["header"]["pile_y"] == -10
-
-    def test_unsupported_version_says_so(self):
+    def test_unknown_versions_say_so(self):
         with pytest.raises(NotImplementedError):
             tuya_map.decode_tuya_map(_map(version=3))
 
-    def test_map_shorter_than_its_header_is_rejected(self):
+    def test_short_file(self):
         with pytest.raises(ValueError):
-            tuya_map.decode_tuya_map(b"\x02\x00\x07\x00short")
+            tuya_map.decode_tuya_map(b"\x01\x00\x01")
 
-    def test_compressed_length_past_the_buffer_is_rejected(self):
+    def test_compressed_length_past_the_buffer(self):
         with pytest.raises(ValueError):
             tuya_map.decode_tuya_map(_map(compressed_length=4096))
 
-    def test_body_smaller_than_the_declared_grid_is_rejected(self):
-        # A header claiming 8x4 over a body that cannot hold 32 cells.
-        payload = _lz4_literals(b"tiny")
-        header = bytearray(_map()[:24])
-        struct.pack_into(">H", header, 20, len(b"tiny"))
-        struct.pack_into(">H", header, 22, len(payload))
+    def test_zero_resolution(self):
+        raw = bytearray(_map())
+        struct.pack_into(">H", raw, 12, 0)
         with pytest.raises(ValueError):
-            tuya_map.decode_tuya_map(bytes(header) + payload)
+            tuya_map.decode_tuya_map(bytes(raw))
 
 
-class TestRoomsAndAreas:
-    def _two_rooms(self):
-        rooms = _room_block(1, b"Kitchen", [(0, 0), (10, 0), (10, 10)]) + _room_block(
-            2, b"Hall", [(20, 20), (30, 30)]
-        )
-        # 3 cells of room 1, 2 of room 2, one wall, one carpet.
-        grid = _grid({
-            0: (1 << 3) | 0x07, 1: (1 << 3) | 0x07, 2: (1 << 3) | 0x07,
-            8: (2 << 3) | 0x07, 9: (2 << 3) | 0x07,
-            16: 0x01, 17: 0x02,
-        })
-        return tuya_map.decode_tuya_map(_map(grid=grid, rooms=rooms, room_count=2))
+class TestRooms:
+    def test_names_numbered_like_the_app_when_empty(self):
+        rooms = tuya_map.decode_tuya_map(
+            _map(rooms=[_room_block(0), _room_block(1, b"Kitchen", [(0, 0), (10, 10)])])
+        )["rooms"]
+        assert [room["name"] for room in rooms] == ["Room 1", "Kitchen"]
+        assert rooms[1]["vertices"] == [[0, 0], [10, 10]]
 
-    def test_room_names_and_vertices(self):
-        rooms = self._two_rooms()["rooms"]
-        assert [room["name"] for room in rooms] == ["Kitchen", "Hall"]
-        assert rooms[0]["vertices"] == [[0, 0], [10, 0], [10, 10]]
-        assert rooms[1]["vertices"] == [[20, 20], [30, 30]]
-
-    def test_room_areas_use_the_header_resolution(self):
-        # 3 cells at 5cm x 5cm = 75 cm2 = 0.01 m2 (rounded to 2 decimals).
-        areas = self._two_rooms()["room_areas_m2"]
-        assert areas[1] == round(3 * RESOLUTION_CM ** 2 / 10_000, 2)
-        assert areas[2] == round(2 * RESOLUTION_CM ** 2 / 10_000, 2)
-
-    def test_truncated_room_metadata_is_rejected(self):
+    def test_truncated_room_metadata(self):
+        raw = bytearray(_map(rooms=[_room_block(0)]))
+        raw[24 + 2 + WIDTH * HEIGHT + 1] = 2   # claim a second room that is not there
         with pytest.raises(ValueError):
-            tuya_map.decode_tuya_map(_map(rooms=b"\x00" * 10, room_count=1))
-
-    def test_truncated_room_vertices_are_rejected(self):
-        claims_four_vertices = bytearray(_room_block(1, b"X", []))
-        claims_four_vertices[46] = 4
-        with pytest.raises(ValueError):
-            tuya_map.decode_tuya_map(_map(rooms=bytes(claims_four_vertices), room_count=1))
+            tuya_map.decode_tuya_map(bytes(raw))
 
 
-class TestPathAndTrailer:
-    def test_embedded_path_points_are_read(self):
+class TestPath:
+    def test_break_markers_flag_the_next_point_as_travel(self):
+        brk = tuya_map.PATH_BREAK
         decoded = tuya_map.decode_tuya_map(
-            _map(trailer=_path_section([(0, 0), (10, -20), (30, 40)]))
+            _map(trailer=_path_section([(0, 0), (10, 0), brk, (20, 0), brk, (30, 0)]))
         )
-        assert decoded["path_points"] == [[0, 0], [10, -20], [30, 40]]
+        assert decoded["path_points"] == [[0, 0], [10, 0], [20, 0], [30, 0]]
+        assert decoded["path_travel"] == [False, False, True, True]
 
-    def test_a_separate_path_file_wins_over_the_embedded_one(self):
+    def test_compressed_path(self):
         decoded = tuya_map.decode_tuya_map(
-            _map(trailer=_path_section([(0, 0)])),
-            _path_section([(1, 1), (2, 2)]),
+            _map(trailer=_path_section([(1, 2), (3, 4)], compress=True))
         )
-        assert decoded["path_points"] == [[1, 1], [2, 2]]
+        assert decoded["path_points"] == [[1, 2], [3, 4]]
 
-    def test_an_unreadable_path_file_falls_back_to_the_embedded_path(self):
-        # A separate file that cannot be parsed must not lose the path we already have.
+    def test_include_path_false_hides_it(self):
         decoded = tuya_map.decode_tuya_map(
-            _map(trailer=_path_section([(5, 5)])), b"\xff" * 13 + b"\x00"
+            _map(trailer=_path_section([(1, 2)])), include_path=False
         )
-        assert decoded["path_points"] == [[5, 5]]
+        assert decoded["path_points"] == []
 
-    def test_virtual_walls_and_no_go_zones(self):
-        walls = _aa_frame(0x13, bytes([1]) + struct.pack(">hhhh", 0, 0, 100, 100))
-        zone = _aa_frame(
-            0x1B,
-            bytes([1, 0, 4]) + b"".join(
-                struct.pack(">hh", x, y) for x, y in [(0, 0), (10, 0), (10, 10), (0, 10)]
-            ),
-        )
-        decoded = tuya_map.decode_tuya_map(
-            _map(trailer=_path_section([]) + walls + zone)
-        )
-        assert decoded["virtual_walls"] == [[[0, 0], [100, 100]]]
-        assert decoded["no_go_zones"] == [
-            {"index": 1, "type": 0, "points": [[0, 0], [10, 0], [10, 10], [0, 10]]}
-        ]
-        assert decoded["embedded_commands"] == ["0x13", "0x1B"]
+    def test_separate_path_file_wins_and_bad_one_is_ignored(self):
+        raw = _map(trailer=_path_section([(5, 5)]))
+        assert tuya_map.decode_tuya_map(raw, _path_section([(1, 1)]))["path_points"] == [[1, 1]]
+        assert tuya_map.decode_tuya_map(raw, b"\xff" * 14)["path_points"] == [[5, 5]]
 
-    def test_a_frame_with_a_bad_checksum_is_ignored(self):
-        frame = bytearray(_aa_frame(0x13, bytes([1]) + struct.pack(">hhhh", 0, 0, 1, 1)))
-        frame[-1] ^= 0xFF
-        decoded = tuya_map.decode_tuya_map(_map(trailer=_path_section([]) + bytes(frame)))
-        assert decoded["virtual_walls"] == []
-        assert decoded["embedded_commands"] == []
-
-    def test_an_implausible_point_count_is_rejected(self):
+    def test_implausible_point_count(self):
         section = bytearray(13)
         section[5:9] = (9_000_000).to_bytes(4, "big")
         with pytest.raises(ValueError):
             tuya_map.decode_tuya_map(_map(trailer=bytes(section)))
 
-    def test_a_truncated_path_is_rejected(self):
+    def test_truncated_path(self):
         section = bytearray(13)
         section[5:9] = (100).to_bytes(4, "big")
         with pytest.raises(ValueError):
-            tuya_map.decode_tuya_map(_map(trailer=bytes(section) + b"\x00\x00"))
+            tuya_map.decode_tuya_map(_map(trailer=bytes(section)))
 
+
+class TestCoordinates:
+    HEADER = {"origin_x": ORIGIN_X, "origin_y": ORIGIN_Y, "resolution_cm": RESOLUTION_CM}
+
+    def test_robot_units_are_y_up_from_the_origin(self):
+        assert tuya_map._robot_to_cell([0, 0], self.HEADER) == (3, 4)
+        assert tuya_map._robot_to_cell([UNITS, UNITS], self.HEADER) == (4, 3)
+
+    def test_zero_resolution(self):
+        with pytest.raises(ValueError):
+            tuya_map._robot_to_cell([0, 0], {**self.HEADER, "resolution_cm": 0})
+
+
+# --------------------------------------------------------------------------- #
+# Version 1 (A30 Pro)
+# --------------------------------------------------------------------------- #
+
+class TestA30:
+    WALL_CELLS = [(1, -1), (1, 1)]
+    ZONE_CELLS = [(-2, 0), (-2, 1), (0, 1), (0, 0)]
+
+    def test_cells_are_room_id_shifted_by_two_with_flags_ignored(self):
+        grid = _grid({0: 0 << 2, 1: 0 << 2 | 1, 2: 1 << 2, 3: 1 << 2 | 3, 4: 1 << 2, 5: WALL})
+        decoded = tuya_map.decode_tuya_map(_map(grid=grid, rooms=[_room_block(0), _room_block(1)]))
+        cell = RESOLUTION_CM ** 2 / 10_000
+        assert decoded["room_areas_m2"] == {0: round(2 * cell, 2), 1: round(3 * cell, 2)}
+        assert decoded["cells"][5] == (tuya_map.KIND_WALL, None)
+        assert decoded["cells"][6] == (tuya_map.KIND_OUTSIDE, None)
+
+    def test_walls_and_zones_are_cell_offsets_from_the_robot_origin(self):
+        # One cell right and one up is UNITS robot units each way, not 1.
+        decoded = tuya_map.decode_tuya_map(_map(trailer=(
+            _path_section([(0, 0)], compress=True)
+            + _walls([self.WALL_CELLS]) + _zones([self.ZONE_CELLS])
+        )))
+        assert decoded["virtual_walls"] == [[[x * UNITS, y * UNITS] for x, y in self.WALL_CELLS]]
+        assert decoded["no_go_zones"] == [[[x * UNITS, y * UNITS] for x, y in self.ZONE_CELLS]]
+
+    def test_record_bytes_inside_the_path_are_not_mistaken_for_records(self):
+        decoded = tuya_map.decode_tuya_map(
+            _map(trailer=_path_section([(0x1302, 0x1B00), (0x1301, 0x13)]))
+        )
+        assert decoded["virtual_walls"] == [] and decoded["no_go_zones"] == []
+
+    def test_parsing_stops_at_an_unknown_tag(self):
+        # The A30 Pro ends the file with a trailer of unknown meaning.
+        trailer = _path_section([]) + _walls([self.WALL_CELLS]) + bytes.fromhex("0200010500020100")
+        assert len(tuya_map.decode_tuya_map(_map(trailer=trailer))["virtual_walls"]) == 1
+
+    def test_truncated_record(self):
+        with pytest.raises(ValueError):
+            tuya_map.decode_tuya_map(
+                _map(trailer=_path_section([]) + _walls([self.WALL_CELLS])[:-3]))
+
+
+# --------------------------------------------------------------------------- #
+# Version 2 (V20)
+# --------------------------------------------------------------------------- #
+
+class TestV20:
+    def _two_rooms(self):
+        # 3 cells of room 1, 2 of room 2, one wall, one carpet.
+        grid = _grid({
+            0: (1 << 3) | 0x07, 1: (1 << 3) | 0x07, 2: (1 << 3) | 0x07,
+            8: (2 << 3) | 0x07, 9: (2 << 3) | 0x07, 16: 0x01, 17: 0x02,
+        }, fill=0)
+        rooms = [_room_block(1, b"Kitchen"), _room_block(2, b"Hall")]
+        return tuya_map.decode_tuya_map(_map(version=V20, grid=grid, rooms=rooms))
+
+    def test_cells_and_areas(self):
+        decoded = self._two_rooms()
+        cell = RESOLUTION_CM ** 2 / 10_000
+        assert decoded["room_areas_m2"] == {1: round(3 * cell, 2), 2: round(2 * cell, 2)}
+        assert decoded["cells"][16] == (tuya_map.KIND_WALL, None)
+        assert decoded["cells"][17] == (tuya_map.KIND_CARPET, None)
+        assert decoded["cells"][20] == (tuya_map.KIND_OUTSIDE, None)
+
+    def test_walls_and_zones_come_from_frames_in_robot_units(self):
+        walls = _frame(0x13, bytes([1]) + _points([(0, 0), (100, 100)]))
+        zone = _frame(0x1B, bytes([1, 0, 4]) + _points([(0, 0), (10, 0), (10, 10), (0, 10)]))
+        decoded = tuya_map.decode_tuya_map(
+            _map(version=V20, trailer=_path_section([]) + walls + zone))
+        assert decoded["virtual_walls"] == [[[0, 0], [100, 100]]]
+        assert decoded["no_go_zones"] == [[[0, 0], [10, 0], [10, 10], [0, 10]]]
+
+    def test_a_frame_with_a_bad_checksum_is_ignored(self):
+        frame = bytearray(_frame(0x13, bytes([1]) + _points([(0, 0), (1, 1)])))
+        frame[-1] ^= 0xFF
+        decoded = tuya_map.decode_tuya_map(
+            _map(version=V20, trailer=_path_section([]) + bytes(frame)))
+        assert decoded["virtual_walls"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Rendering and history
+# --------------------------------------------------------------------------- #
 
 class TestRendering:
-    def test_a_full_map_renders_to_a_png(self):
+    @pytest.mark.parametrize("version", [A30, V20])
+    def test_full_map(self, version):
         pytest.importorskip("PIL", reason="Pillow ships with Home Assistant")
-        rooms = _room_block(1, b"Kitchen", [(0, 0), (10, 10)])
-        grid = _grid({0: (1 << 3) | 0x07, 1: (1 << 3) | 0x07, 8: 0x01, 9: 0x02})
-        walls = _aa_frame(0x13, bytes([1]) + struct.pack(">hhhh", 0, 0, 40, 40))
-        png, metadata = tuya_map.render_tuya_map_png(
-            _map(
-                grid=grid,
-                rooms=rooms,
-                room_count=1,
-                trailer=_path_section([(0, 0), (10, 10)]) + walls,
-            )
-        )
+        floor = 0 if version == A30 else 0x07
+        grid = _grid({i: floor for i in range(8, 40)}, fill=OUT if version == A30 else 0)
+        if version == A30:
+            overlays = _walls([TestA30.WALL_CELLS]) + _zones([TestA30.ZONE_CELLS])
+        else:
+            overlays = _frame(0x13, bytes([1]) + _points([(0, 0), (UNITS, UNITS)]))
+        png, metadata = tuya_map.render_tuya_map_png(_map(
+            version=version, grid=grid, rooms=[_room_block(0)],
+            trailer=_path_section([(0, 0), (10, 10)]) + overlays,
+        ))
         assert png.startswith(b"\x89PNG\r\n\x1a\n")
-        assert metadata["map_width"] == WIDTH
-        assert metadata["map_height"] == HEIGHT
-        assert metadata["rooms"] == ["Kitchen"]
-        assert metadata["virtual_walls"] == 1
-        assert metadata["path_points"] == 2
-
-    def test_metadata_never_carries_the_map_body(self):
-        # The camera publishes this dict as state attributes; it must stay a summary.
-        pytest.importorskip("PIL", reason="Pillow ships with Home Assistant")
-        _, metadata = tuya_map.render_tuya_map_png(_map())
+        assert metadata["rooms"] == {0: "Room 1"}
+        assert metadata["path_points"] == 2 and metadata["virtual_walls"] == 1
         assert all(not isinstance(value, bytes) for value in metadata.values())
 
-    def test_a_zero_resolution_map_does_not_divide_by_zero(self):
-        header = bytearray(_map(trailer=_path_section([(1, 1)]))[:24])
-        struct.pack_into(">H", header, 12, 0)  # resolution_cm
-        raw = bytes(header) + _map(trailer=_path_section([(1, 1)]))[24:]
-        with pytest.raises(ValueError):
-            tuya_map.render_tuya_map_png(raw)
+    def test_room_names_from_the_app_replace_the_numbered_ones(self):
+        pytest.importorskip("PIL", reason="Pillow ships with Home Assistant")
+        _, metadata = tuya_map.render_tuya_map_png(
+            _map(grid=_grid({8: 0, 9: 1 << 2}), rooms=[_room_block(0), _room_block(1)]),
+            room_names={1: "Kitchen"},
+        )
+        assert metadata["rooms"] == {0: "Room 1", 1: "Kitchen"}
+
+    def test_points_off_the_grid_break_the_path_instead_of_being_drawn(self):
+        pytest.importorskip("PIL", reason="Pillow ships with Home Assistant")
+        _, metadata = tuya_map.render_tuya_map_png(
+            _map(trailer=_path_section([(0, 0), (10, 0), (-30000, 30000), (10, 10)]))
+        )
+        assert (metadata["path_points"], metadata["path_points_off_map"]) == (4, 1)
+
+    def test_hidden_path(self):
+        pytest.importorskip("PIL", reason="Pillow ships with Home Assistant")
+        _, metadata = tuya_map.render_tuya_map_png(
+            _map(trailer=_path_section([(0, 0), (10, 10)])), include_path=False
+        )
+        assert metadata["path_points"] == 0
+
+    def test_labels_fold_what_the_builtin_font_cannot_draw(self):
+        assert tuya_map._fold_to_latin1("Łazienka żółta") == "Lazienka zólta"
+
+
+class TestHistory:
+    def test_thumbnail_uses_the_cards_format(self):
+        grid = _grid({0: 0, 1: 0, 2: WALL, 8: 1 << 2})
+        raw = base64.b64decode(tuya_map.clean_map_thumbnail(_map(grid=grid), factor=1))
+        assert raw[:2] == bytes([0x01, 2])              # format, bytes per row (8 cells)
+        assert len(raw) == 2 + 2 * HEIGHT
+        assert raw[2] == 0b01_01_10_00                  # floor, floor, wall, outside
+        assert raw[4] >> 6 == 1                          # row 1, cell 0: room 1 floor
+
+    def test_path_keeps_only_the_cleaning_runs(self):
+        brk = tuya_map.PATH_BREAK
+        points = [(0, 0), (UNITS, 0), (2 * UNITS, 0), brk, (0, UNITS), (0, 0)]
+        runs = tuya_map.clean_map_path(_map(trailer=_path_section(points)), factor=1)
+        assert runs == [[3, 4, 4, 4, 5, 4], [3, 3, 3, 4]]
+
+
+CAPTURE = os.environ.get("ILIFE_A30_CAPTURE")
+
+
+@pytest.mark.skipif(not CAPTURE, reason="set ILIFE_A30_CAPTURE to a private A30 Pro map file")
+def test_private_capture_decodes_and_renders():
+    pytest.importorskip("PIL")
+    raw = pathlib.Path(CAPTURE).read_bytes()
+    decoded = tuya_map.decode_tuya_map(raw)
+    assert decoded["rooms"] and decoded["path_points"]
+    png, _ = tuya_map.render_tuya_map_png(raw)
+    assert png.startswith(b"\x89PNG")

@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from functools import partial
 
 from homeassistant.components.camera import Camera
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -29,13 +30,22 @@ TUYA_MAP_ACTIVE_CACHE_SECONDS = 30
 TUYA_MAP_IDLE_CACHE_SECONDS = 300
 TUYA_MAP_POST_CLEAN_SECONDS = 600
 TUYA_MAP_REQUEST_SECONDS = 60
-# Not every ILIFE Clean model publishes a map: the A30 Pro of #23 and the T20s of
-# #24 both advertise `request`/`path_data` and never produce one, and a Cloud
-# Project without the Robot Vacuum service never will either. Those are permanent
+# Not every ILIFE Clean model publishes a map: the T20s of #24 advertises
+# `request`/`path_data` and never produces one, and a Cloud Project without the
+# Robot Vacuum service never will either. (The A30 Pro of #23 does publish one, but
+# only as a stored map once a run has finished.) Those are permanent
 # conditions, so failures back off instead of retrying on every coordinator tick —
 # otherwise the owners of those models get a cloud call and a traceback every 30s
 # for a map that is never coming.
 TUYA_MAP_RETRY_BACKOFF = (30, 60, 300, 900, 3600)
+
+
+def _map_payload(files: list[dict], map_type: int) -> bytes | None:
+    """The payload of the first file of `map_type` (0 = layout, 1 = path)."""
+    return next(
+        (item.get("payload") for item in files if item.get("map_type") == map_type),
+        None,
+    )
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -101,6 +111,12 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
         self._cache_png = None
         self._cache_metadata = {}
         self._cache_time = 0.0
+        self._render_key = None
+        self._render_metadata = {}
+        # Newest stored map ({"record": ..., "layout": bytes}), kept so it is only
+        # downloaded again when Tuya lists a newer one, and so a run in progress on a
+        # model without a realtime layout still has a floor plan to draw on.
+        self._stored = None
         self._failures = 0
         self._refresh_lock = asyncio.Lock()
         self._refresh_task = None
@@ -228,41 +244,98 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
                 if time.monotonic() - self._cache_time < self._cache_seconds():
                     return
             try:
-                await self._async_request_current_map()
-                files = await self.hass.async_add_executor_job(self.api.realtime_map_files)
-                layout = next(
-                    (item.get("payload") for item in files if item.get("map_type") == 0),
-                    None,
-                )
-                path = next(
-                    (item.get("payload") for item in files if item.get("map_type") == 1),
-                    None,
-                )
-                if not layout:
-                    self._note_failure("Tuya returned no layout map for this device")
-                else:
-                    png, metadata = await self.hass.async_add_executor_job(
-                        render_tuya_map_png, layout, path
-                    )
-                    source = next(
-                        (item for item in files if item.get("map_type") == 0), {}
-                    )
-                    metadata.update({
-                        "map_source": source.get("source"),
-                        "map_record_id": source.get("record_id"),
-                        "map_record_time": source.get("record_time"),
-                        "map_fetched_at": int(time.time()),
-                        "map_payload_sha256": hashlib.sha256(layout).hexdigest(),
-                    })
-                    self._cache_png = png
-                    self._cache_metadata = metadata
-                    if self._failures:
-                        _LOGGER.info("ILIFE Clean map recovered for %s", self.api.device_id)
-                    self._failures = 0
+                await self._async_update_map()
             except Exception as err:  # noqa: BLE001
                 self._note_failure(f"{type(err).__name__}: {err}")
             self._cache_time = time.monotonic()
             self.async_write_ha_state()
+
+    async def _async_update_map(self) -> None:
+        """Pick the best map Tuya has right now and render it.
+
+        In order of preference:
+          1. a realtime layout (models such as the V20 publish one while cleaning);
+          2. a realtime path drawn on the newest stored layout;
+          3. the newest stored map — with its own path when idle, but without it
+             during a run, since that path belongs to the previous one.
+        A model whose realtime endpoint stays empty during a run falls through to 3
+        and gets its path once the run is stored; the post-clean polling
+        (TUYA_MAP_POST_CLEAN_SECONDS at the active rate) picks that up.
+        `map_source` / `map_path` in the attributes say which case applied.
+        """
+        cleaning = self._is_cleaning()
+        await self._async_request_current_map()
+        live = await self.hass.async_add_executor_job(self.api.realtime_map_files)
+        layout, path = _map_payload(live, 0), _map_payload(live, 1)
+        record = None
+        if layout:
+            source, path_mode = "realtime", "live"
+        else:
+            # The A30 Pro stores a map only once a run is over (checked every
+            # minute through a 10-minute run: nothing new), so a run in progress
+            # reuses the stored layout instead of asking for a newer one.
+            if not cleaning or self._stored is None:
+                await self._async_refresh_stored()
+            if self._stored is None:
+                if cleaning:
+                    self._cache_metadata = {
+                        **self._cache_metadata,
+                        "map_path": "waiting",
+                        "map_fetched_at": int(time.time()),
+                        "map_last_error": None,
+                    }
+                    return
+                self._note_failure("Tuya returned no map for this device")
+                return
+            layout, record = self._stored["layout"], self._stored["record"]
+            source = "stored"
+            if path:
+                path_mode = "live"
+            elif cleaning:
+                path_mode = "hidden"
+            else:
+                path_mode = "last_run"
+
+        room_names = dict(getattr(self.coordinator, "room_names", None) or {})
+        render_key = (
+            hashlib.sha256(layout).hexdigest(),
+            hashlib.sha256(path).hexdigest() if path else None,
+            path_mode,
+            tuple(sorted(room_names.items())),
+        )
+        if render_key != self._render_key or self._cache_png is None:
+            self._cache_png, self._render_metadata = await self.hass.async_add_executor_job(
+                partial(
+                    render_tuya_map_png, layout, path,
+                    include_path=path_mode != "hidden",
+                    room_names=room_names,
+                )
+            )
+            self._render_key = render_key
+        self._cache_metadata = {
+            **self._render_metadata,
+            "map_source": source,
+            "map_path": path_mode,
+            "map_record_id": record.get("id") if record else None,
+            "map_record_time": record.get("time") if record else None,
+            "map_fetched_at": int(time.time()),
+            "map_payload_sha256": render_key[0],
+        }
+        if self._failures:
+            _LOGGER.info("ILIFE Clean map recovered for %s", self.api.device_id)
+        self._failures = 0
+
+    async def _async_refresh_stored(self) -> None:
+        """Keep the newest stored map in memory, downloading it only when it changes."""
+        record = await self.hass.async_add_executor_job(self.api.latest_stored_map)
+        if record is None:
+            return
+        if self._stored is not None and self._stored["record"].get("id") == record.get("id"):
+            return
+        files = await self.hass.async_add_executor_job(self.api.stored_map_files, record)
+        layout = _map_payload(files, 0)
+        if layout:
+            self._stored = {"record": record, "layout": layout}
 
     async def async_camera_image(self, width=None, height=None):
         await self._async_refresh_map()

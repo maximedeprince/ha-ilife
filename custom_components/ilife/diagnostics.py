@@ -62,6 +62,7 @@ TO_REDACT = {
     "lat",
     "lon",
     "sn",
+    "wifi_info",  # the robot's LAN address, among the product properties
 }
 
 
@@ -91,6 +92,11 @@ def _device_diag(coordinator: Any) -> dict[str, Any]:
     spec = getattr(coordinator, "spec", None)
     if spec:
         diag["specification"] = async_redact_data(spec, TO_REDACT)
+    # ILIFE Clean only: product DPs outside the standard set (room names, room
+    # cleaning, schedules...) — what a new feature for a model is decoded from.
+    properties = getattr(coordinator, "properties", None)
+    if properties:
+        diag["properties"] = async_redact_data(properties, TO_REDACT)
     return diag
 
 
@@ -139,7 +145,6 @@ def _describe_map_file(item: dict[str, Any]) -> dict[str, Any]:
         "path_points": len(decoded["path_points"]),
         "virtual_walls": len(decoded["virtual_walls"]),
         "no_go_zones": len(decoded["no_go_zones"]),
-        "embedded_commands": decoded["embedded_commands"],
     }
     return described
 
@@ -147,14 +152,26 @@ def _describe_map_file(item: dict[str, Any]) -> dict[str, Any]:
 async def _async_device_diag(
     hass: HomeAssistant, coordinator: Any
 ) -> dict[str, Any]:
-    """Build one device dump and probe Tuya's separate realtime-map API on demand."""
+    """Build one device dump and probe Tuya's map API on demand.
+
+    The realtime map comes first; when there is none (always the case on an idle
+    robot) the newest stored map is probed instead.
+    """
     diag = _device_diag(coordinator)
-    fetch = getattr(coordinator.api, "realtime_map_files", None)
-    if fetch is None:
+    api = coordinator.api
+    if not hasattr(api, "realtime_map_files"):
         return diag
 
+    def _fetch() -> list[dict]:
+        files = api.realtime_map_files()
+        if not files:
+            record = api.latest_stored_map()
+            if record is not None:
+                files = api.stored_map_files(record)
+        return files
+
     try:
-        files = await hass.async_add_executor_job(fetch)
+        files = await hass.async_add_executor_job(_fetch)
     except TuyaError as err:
         diag["realtime_map_probe"] = {"success": False, "error": str(err)}
         return diag

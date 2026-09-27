@@ -1,4 +1,7 @@
-"""ILIFE buttons: directional remote control, dust-bin emptying, consumable resets."""
+"""ILIFE buttons: directional remote control, dust-bin emptying, consumable resets.
+
+ILIFE Clean (Tuya): the consumable and map resets only.
+"""
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
@@ -6,8 +9,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
 
 from .api import ILifeError, ILifeOfflineError
-from .const import DOMAIN
+from .const import BACKEND_ILIFE_CLEAN, DOMAIN, TUYA_CONSUMABLES, TUYA_DP_RESET_MAP
 from .entity import ILifeEntity
+from .tuya_api import TuyaError, TuyaOfflineError
+from .tuya_entity import TuyaEntity
 
 # (translation_key, icon, CleanDirection)
 DIRECTION_BUTTONS = [
@@ -29,10 +34,20 @@ RESET_BUTTONS = [
 async def async_setup_entry(hass, entry, async_add_entities):
     data = hass.data[DOMAIN][entry.entry_id]
     entities = []
-    for coordinator in data["coordinators"].values():
-        entities += [ILifeDirectionButton(coordinator, *b) for b in DIRECTION_BUTTONS]
-        entities.append(ILifeDustButton(coordinator))
-        entities += [ILifeResetButton(coordinator, *b) for b in RESET_BUTTONS]
+    if data.get("backend") == BACKEND_ILIFE_CLEAN:
+        for coordinator in data["coordinators"].values():
+            functions = coordinator.spec_functions
+            for _, reset, key, icon in TUYA_CONSUMABLES.values():
+                if reset in functions:
+                    entities.append(TuyaResetButton(coordinator, reset, key, icon))
+            if TUYA_DP_RESET_MAP in functions:
+                entities.append(TuyaResetButton(
+                    coordinator, TUYA_DP_RESET_MAP, "reset_map", "mdi:map-marker-remove"))
+    else:
+        for coordinator in data["coordinators"].values():
+            entities += [ILifeDirectionButton(coordinator, *b) for b in DIRECTION_BUTTONS]
+            entities.append(ILifeDustButton(coordinator))
+            entities += [ILifeResetButton(coordinator, *b) for b in RESET_BUTTONS]
     async_add_entities(entities)
 
 
@@ -61,6 +76,33 @@ class ILifeDustButton(_Base):
 
     async def async_press(self):
         await self.hass.async_add_executor_job(self.api.set_prop, "DustCollectionSwitch", 1, 1)
+
+
+class TuyaResetButton(TuyaEntity, ButtonEntity):
+    """ILIFE Clean: a one-shot reset DP (brush / filter life back to new, or the map)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator, code, key, icon):
+        super().__init__(coordinator)
+        self._code = code
+        self._attr_translation_key = key
+        self._attr_icon = icon
+        self._attr_unique_id = f"{self.api.device_id}_{code}"
+        # One click from wiping the map, rooms, walls and room schedules, with no
+        # confirmation: present, but off until someone enables it on purpose.
+        if code == TUYA_DP_RESET_MAP:
+            self._attr_entity_registry_enabled_default = False
+
+    async def async_press(self):
+        try:
+            await self.coordinator.async_write(self._code, True)
+        except TuyaOfflineError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="device_offline"
+            ) from err
+        except TuyaError as err:
+            raise HomeAssistantError(str(err)) from err
 
 
 class ILifeResetButton(_Base):

@@ -54,18 +54,26 @@ back the four fields and the brand ships.
 - 🔋 Battery, brushes and filter wear, last clean, connectivity (online/offline)
 - 🗺️ Live map camera + **clickable cleaning history with the day's map**
 - 🖼️ Each cleaning is archived as a tiny PNG in `www/ilife_maps/`
-- 🧩 Bundled **ILIFE Vacuum Card** — added from the UI, **responsive** (2 columns on desktop, 1 on mobile), English + French
+- 🧩 Bundled **ILIFE Vacuum Card** — added from the UI, **responsive** (2 columns on desktop, 1 on mobile), English + French + Polish
 - 👥 Multiple vacuums and multiple accounts supported
 - 🧾 **Download diagnostics** (credentials redacted) and 🗑️ **remove old / replaced devices** from the UI
 
 ## Features — ILIFE Clean backend
 
 - 🧹 Full vacuum entity: start / pause / stop / return to dock / locate / suction
-- 🔋 Battery, current cleaning area/time, fault status, connectivity (online/offline)
-- 🧭 Cleaning mode and water level selects, if supported by the device
-- 🔀 Mop/self-empty toggles, consumables, and every other metric the device reports
-- 🗺️ Live map camera on laser models that publish one — see
-  [The map on ILIFE Clean](#the-map-on-ilife-clean)
+- 🔋 Battery, current cleaning area/time, connectivity (online/offline), and a
+  **problem** sensor naming the fault ("stuck", "dust bin missing"…)
+- 🧭 Cleaning mode and water level selects, if supported by the device — including
+  the *off* and *max* values the app offers
+- 🪥 Side brush, main brush and filter life in %, with reset buttons
+- 🔀 Do not disturb, resume after charging, auto-empty, carpet boost, Y-shaped
+  mopping, cleaning efficiency and voice volume, where the model has them
+- 🗺️ Map camera on laser models — see [The map on ILIFE Clean](#the-map-on-ilife-clean)
+- 🏠 On models that keep rooms (confirmed on the A30 Pro): **room names from the
+  app**, **cleaning selected rooms** once or twice, the app's **cleaning programs**
+  (standard / plan 1 / plan 2), its **schedules** (view, edit, add, delete) and a
+  **cleaning history** with each clean's area, duration and map — see
+  [Rooms, programs and schedules](#rooms-programs-and-schedules-ilife-clean)
 - 📊 Lifetime totals (area, time, number of cleanings) where the device reports them
 
 Everything above is derived from the device's own live `/specifications` response, so
@@ -237,27 +245,67 @@ unless the Cloud Project is authorized for it.
 **What it needs:**
 
 1. A laser model that maps. Confirmed on the **ILIFE V20** (contributed and
-   tested in [#28](https://github.com/maximedeprince/ha-ilife/issues/28)). The
-   gyroscopic models do not publish a map — the **A30 Pro** and **T20s** both
-   advertise a `request`/`path_data` data point and never put anything in it.
+   tested in [#28](https://github.com/maximedeprince/ha-ilife/issues/28)) and the
+   **ILIFE A30 Pro**. The **T20s** publishes no map.
 2. **Robot Vacuum Open APIs** authorized on your Tuya Cloud Project
    (**Cloud → your project → Service API → Go to Authorize**). Free, and not
    enabled by default.
 
 With both, you get a `camera.<vacuum>_map` entity: rooms in colour with their
-names and areas, the cleaning path, the dock, the robot, virtual walls and no-go
-zones. The card picks it up on its own. It refreshes every 30 seconds while the
-robot is cleaning and every 5 minutes otherwise.
+names and areas, the cleaning path (runs solid, legs travelled without cleaning
+faint), the dock, the robot, virtual walls and no-go zones. The card picks it up
+on its own.
+
+**Not every model maps the same way.** The V20 publishes a realtime map while it
+cleans, so the camera follows the run. The A30 Pro only stores a map once a run is
+over: during a clean the camera shows the floor plan without a path (the card says
+*Floor plan*), and the finished run with its path appears within a minute of the
+robot docking. Its live path and position go to the app over Tuya's peer-to-peer
+channel only — the device log on iot.tuya.com shows no `path_data` report at any
+point of a run, and the realtime-map endpoint stays empty even with the app open
+and requesting it — so no cloud integration can draw them.
 
 **If the map stays unavailable**, the entity's `map_last_error` attribute says
 why, and the first failure is logged as a warning. `1106` there means the Robot
-Vacuum service is not authorized — that is step 2 above. "No layout map returned"
-means the authorization is fine and this model simply does not publish one; the
-integration then backs off rather than polling a map that is never coming.
+Vacuum service is not authorized — that is step 2 above. "Tuya returned no map
+for this device" means the authorization is fine and this model has neither a
+realtime nor a stored map; the integration then backs off rather than polling a
+map that is never coming.
 
-**On zone and room cleaning:** the map is read-only for now. The decoder reads
-room ids, names and polygons, so sending the robot to a named room is a realistic
-next step, but it is not implemented and I would rather say so than imply it.
+## Rooms, programs and schedules (ILIFE Clean)
+
+Laser models that keep rooms store them in product data points outside the
+standard instruction set, which the integration reads and writes through Tuya's
+thing-model API. Worked out on the **A30 Pro** against its app and Tuya's device
+log; other models get the features only if they report the same data points.
+
+- **Room names** come from the app (`MapRoomInfo…`): the map, the card and the
+  vacuum's `rooms` attribute use them. Renaming a room in the app shows up within
+  five minutes.
+- **Cleaning selected rooms** — the card's *Rooms* chips, or:
+
+  ```yaml
+  action: ilife.clean_rooms
+  target:
+    entity_id: vacuum.my_vacuum
+  data:
+    rooms: ["Kitchen", "Hall"]   # names as in the app, or room numbers
+    passes: 2                    # 1, or 2 for a second, crosswise pass
+  ```
+
+- **Cleaning program** — the *Cleaning program* select (standard / plan 1 /
+  plan 2) sets what the next start runs, as the app does. The plans themselves
+  (per-room order, suction, water, passes) are edited in the app.
+- **Schedules** — the card lists the app's schedules and edits them (time, days,
+  whole home or rooms, 1-3 cycles, on/off), adds and deletes them. Also as
+  actions, `ilife.set_schedule` (leave `slot` out to add one) and
+  `ilife.delete_schedule`. A schedule's cleaning program is kept as the app set it.
+- **History** — the ten most recent cleans, each with its start time, area,
+  duration and map, from the maps the robot stores after every run.
+
+**Not available:** zone and spot cleaning and editing walls or no-go zones (they
+need drawing on the map; use the app), and the live path on models that do not
+publish a realtime map (see above).
 
 ## 🙏 Help wanted — testers for other ILIFE models
 

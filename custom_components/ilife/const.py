@@ -124,9 +124,34 @@ TUYA_STATUS_CLEANING = {"cleaning", "smart", "smart_clean", "zone_clean", "part_
 # DP codes surfaced through dedicated entities. Any other DP code the device actually
 # advertises (in its live /specifications response) gets a *generic* entity instead of
 # being silently dropped — see tuya_dynamic.py. Nothing is invented for a DP we can't see.
+# Consumables: {life DP (minutes left): (sensor key, reset DP, reset button key, icon)}.
+# The keys are the ILIFEHOME ones, so the card shows the same wear tiles for both.
+TUYA_CONSUMABLES = {
+    "edge_brush": ("side_brush", "reset_edge_brush", "reset_side_brush", "mdi:brush-variant"),
+    "roll_brush": ("main_brush", "reset_roll_brush", "reset_main_brush", "mdi:brush"),
+    "filter": ("filter", "reset_filter", "reset_filter", "mdi:air-filter"),
+}
+TUYA_DP_RESET_MAP = "reset_map"
+TUYA_DP_VOLUME = "volume_set"
+TUYA_DP_DUST_FREQUENCY = "dust_collection_num"
+# Boolean settings with a known meaning: {code: (translation key, icon)}.
+TUYA_SETTING_SWITCHES = {
+    "switch_disturb": ("do_not_disturb", "mdi:bell-sleep"),
+    "break_clean": ("resume_after_charge", "mdi:battery-sync"),
+    "dust_collection_switch": ("auto_empty", "mdi:delete-restore"),
+}
+# Protocol plumbing (map requests, raw frames, joystick): still created, but
+# disabled until someone wants them.
+TUYA_TECHNICAL_DP_CODES = {
+    "path_data", "command_trans", "voice_data", "request", "direction_control",
+}
+
 TUYA_KNOWN_DP_CODES = {
     TUYA_DP_SWITCH, TUYA_DP_POWER_GO, TUYA_DP_STATUS, TUYA_DP_PAUSE, TUYA_DP_RETURN_HOME,
     TUYA_DP_BATTERY, TUYA_DP_LOCATE, TUYA_DP_CLEAN_AREA, TUYA_DP_CLEAN_TIME,
     TUYA_DP_TOTAL_CLEAN_AREA, TUYA_DP_TOTAL_CLEAN_TIME, TUYA_DP_TOTAL_CLEAN_COUNT,
     TUYA_DP_CLEAN_RECORD, TUYA_DP_FAULT, TUYA_DP_MODE, TUYA_DP_SUCTION, TUYA_DP_CISTERN,
+    TUYA_DP_RESET_MAP, TUYA_DP_VOLUME, TUYA_DP_DUST_FREQUENCY,
+    *TUYA_CONSUMABLES, *(reset for _, reset, _, _ in TUYA_CONSUMABLES.values()),
+    *TUYA_SETTING_SWITCHES,
 }

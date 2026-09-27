@@ -60,6 +60,9 @@
     },
     "fan_speed_unsupported": {
       "message": "« {fan_speed} » n'est pas une puissance d'aspiration acceptée par cet aspirateur. Valeurs possibles : {options}."
+    },
+    "room_unknown": {
+      "message": "« {room} » n'est pas une pièce de la carte de cet aspirateur. Pièces connues : {rooms}."
     }
   },
   "entity": {
@@ -105,11 +108,17 @@
       },
       "fault": {
         "name": "Défaut"
+      },
+      "schedules": {
+        "name": "Programmations"
       }
     },
     "binary_sensor": {
       "online": {
         "name": "En ligne"
+      },
+      "problem": {
+        "name": "Problème"
       }
     },
     "select": {
@@ -118,6 +127,17 @@
       },
       "cleaning_mode": {
         "name": "Mode de nettoyage"
+      },
+      "cleaning_efficiency": {
+        "name": "Efficacité de nettoyage"
+      },
+      "cleaning_program": {
+        "name": "Programme de nettoyage",
+        "state": {
+          "standard": "Standard",
+          "plan_1": "Plan 1",
+          "plan_2": "Plan 2"
+        }
       }
     },
     "switch": {
@@ -144,6 +164,21 @@
       },
       "schedule_7_enable": {
         "name": "Programmation Dimanche"
+      },
+      "y_mop": {
+        "name": "Serpillière en Y"
+      },
+      "carpet_boost": {
+        "name": "Boost tapis"
+      },
+      "do_not_disturb": {
+        "name": "Ne pas déranger"
+      },
+      "resume_after_charge": {
+        "name": "Reprendre après la recharge"
+      },
+      "auto_empty": {
+        "name": "Vidage automatique à la base"
       }
     },
     "time": {
@@ -201,6 +236,73 @@
       },
       "reset_filter": {
         "name": "Réinitialiser filtre"
+      },
+      "reset_map": {
+        "name": "Réinitialiser la carte"
+      }
+    },
+    "number": {
+      "volume": {
+        "name": "Volume"
+      },
+      "auto_empty_frequency": {
+        "name": "Fréquence de vidage automatique"
+      }
+    }
+  },
+  "services": {
+    "clean_rooms": {
+      "name": "Nettoyer des pièces",
+      "description": "Nettoie uniquement les pièces indiquées (modèles laser ILIFE Clean).",
+      "fields": {
+        "rooms": {
+          "name": "Pièces",
+          "description": "Noms des pièces comme dans l'application, ou leurs numéros (l'attribut 'rooms' de l'aspirateur liste les deux)."
+        },
+        "passes": {
+          "name": "Passages",
+          "description": "1, ou 2 pour un second passage croisé."
+        }
+      }
+    },
+    "set_schedule": {
+      "name": "Définir une programmation",
+      "description": "Crée une programmation de nettoyage, ou modifie les champs indiqués d'une programmation existante (modèles laser ILIFE Clean).",
+      "fields": {
+        "slot": {
+          "name": "Emplacement",
+          "description": "Programmation 1 à 7 à modifier ; vide pour en créer une."
+        },
+        "time": {
+          "name": "Heure",
+          "description": "Heure de début."
+        },
+        "days": {
+          "name": "Jours",
+          "description": "Jours de la semaine, 0 = lundi .. 6 = dimanche."
+        },
+        "enabled": {
+          "name": "Activée",
+          "description": "Si la programmation s'exécute."
+        },
+        "rooms": {
+          "name": "Pièces",
+          "description": "Pièces à nettoyer (noms de l'application ou numéros) ; liste vide pour toute la maison."
+        },
+        "cycles": {
+          "name": "Cycles",
+          "description": "Nombre de passages."
+        }
+      }
+    },
+    "delete_schedule": {
+      "name": "Supprimer une programmation",
+      "description": "Supprime une programmation de nettoyage.",
+      "fields": {
+        "slot": {
+          "name": "Emplacement",
+          "description": "Programmation 1 à 7 à supprimer."
+        }
       }
     }
   }
