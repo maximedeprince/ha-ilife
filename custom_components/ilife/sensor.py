@@ -16,6 +16,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     MAX_LENGTH_STATE_STATE,
     PERCENTAGE,
+    EntityCategory,
     UnitOfArea,
     UnitOfInformation,
     UnitOfTime,
@@ -26,14 +27,20 @@ from .const import (
     BACKEND_ILIFE_CLEAN,
     CLEANING_MODES,
     DOMAIN,
+    TUYA_CONSUMABLES,
     TUYA_DP_BATTERY,
     TUYA_DP_CLEAN_AREA,
     TUYA_DP_CLEAN_TIME,
     TUYA_DP_FAULT,
+    TUYA_DP_TOTAL_CLEAN_AREA,
+    TUYA_DP_TOTAL_CLEAN_COUNT,
+    TUYA_DP_TOTAL_CLEAN_TIME,
+    TUYA_TECHNICAL_DP_CODES,
 )
 from .entity import ILifeEntity
 from .tuya_dynamic import status_types, unknown_status_values
 from .tuya_entity import TuyaEntity
+from .tuya_schedule import SCHEDULE_CODES
 
 
 def _parts(state, field):
@@ -107,9 +114,29 @@ async def async_setup_entry(hass, entry, async_add_entities):
                                            "mdi:timer-play-outline", UnitOfTime.MINUTES,
                                            SensorStateClass.MEASUREMENT, TUYA_DP_CLEAN_TIME,
                                            None))
+            if TUYA_DP_TOTAL_CLEAN_AREA in status:
+                entities.append(TuyaSensor(coordinator, "total_area", "mdi:ruler-square",
+                                           UnitOfArea.SQUARE_METERS,
+                                           SensorStateClass.TOTAL_INCREASING,
+                                           TUYA_DP_TOTAL_CLEAN_AREA, None))
+            if TUYA_DP_TOTAL_CLEAN_TIME in status:
+                entities.append(TuyaSensor(coordinator, "total_time", "mdi:timer-outline",
+                                           UnitOfTime.MINUTES,
+                                           SensorStateClass.TOTAL_INCREASING,
+                                           TUYA_DP_TOTAL_CLEAN_TIME, None))
+            if TUYA_DP_TOTAL_CLEAN_COUNT in status:
+                entities.append(TuyaSensor(coordinator, "total_count", "mdi:counter",
+                                           None, SensorStateClass.TOTAL_INCREASING,
+                                           TUYA_DP_TOTAL_CLEAN_COUNT, None))
             if TUYA_DP_FAULT in status:
                 entities.append(TuyaSensor(coordinator, "fault", "mdi:alert-circle-outline",
                                            None, None, TUYA_DP_FAULT, None))
+            for code, (key, _, _, icon) in TUYA_CONSUMABLES.items():
+                if code in status:
+                    entities.append(TuyaConsumableSensor(coordinator, code, key, icon))
+            if any(code in coordinator.properties for code in SCHEDULE_CODES):
+                entities.append(TuyaScheduleSensor(coordinator))
+            entities.append(TuyaHistorySensor(coordinator))
             dp_types = status_types(coordinator.spec)
             for code in unknown_status_values(coordinator.spec, status):
                 entities.append(
@@ -179,6 +206,84 @@ class TuyaSensor(TuyaEntity, SensorEntity):
         return (self.coordinator.data or {}).get(self._code)
 
 
+class TuyaConsumableSensor(TuyaEntity, SensorEntity):
+    """Life left of a brush or the filter, in % of a new part.
+
+    The DP counts minutes left; a new part is the maximum the product's thing model
+    allows (A30 Pro: 900 for the side brush and filter, 1800 for the main brush).
+    """
+
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, code, key, icon):
+        super().__init__(coordinator)
+        self._code = code
+        self._attr_translation_key = key
+        self._attr_icon = icon
+        self._attr_unique_id = f"{self.api.device_id}_{code}_life"
+        self._full = (coordinator.model.get(code) or {}).get("max")
+
+    @property
+    def native_value(self):
+        left = (self.coordinator.data or {}).get(self._code)
+        if not isinstance(left, (int, float)) or not self._full:
+            return None
+        return max(0, min(100, round(left * 100 / self._full)))
+
+    @property
+    def extra_state_attributes(self):
+        return {"minutes_left": (self.coordinator.data or {}).get(self._code)}
+
+
+class TuyaScheduleSensor(TuyaEntity, SensorEntity):
+    """Cleaning schedules set in the app (see tuya_schedule): state = how many are
+    enabled, attribute `schedules` = every one of them, with room names."""
+
+    _attr_translation_key = "schedules"
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{self.api.device_id}_schedules"
+
+    @property
+    def native_value(self):
+        return sum(1 for s in self.coordinator.schedules.values() if s["enabled"])
+
+    @property
+    def extra_state_attributes(self):
+        names = self.coordinator.room_names
+        return {"schedules": [
+            {**schedule, "slot": slot,
+             "room_names": [names.get(room, f"Room {room + 1}") for room in schedule["rooms"]]}
+            for slot, schedule in sorted(self.coordinator.schedules.items())
+        ]}
+
+
+class TuyaHistorySensor(TuyaEntity, SensorEntity):
+    """Recent cleans, one per map the robot stored (see coordinator history):
+    state = how many are listed, attribute `cleans` = the card's history rows."""
+
+    _attr_translation_key = "history"
+    _attr_icon = "mdi:history"
+    # thumbnails are a few KB each: keep them out of the recorder
+    _unrecorded_attributes = frozenset({"cleans"})
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{self.api.device_id}_history"
+
+    @property
+    def native_value(self):
+        return len(self.coordinator.history)
+
+    @property
+    def extra_state_attributes(self):
+        return {"cleans": self.coordinator.history}
+
+
 def _b64_size(value):
     """Decoded size in bytes of a Tuya Raw DP, or None if it carries nothing."""
     if not value:
@@ -209,6 +314,8 @@ class TuyaGenericSensor(TuyaEntity, SensorEntity):
         self._dp_type = dp_type
         self._attr_name = code.replace("_", " ").title()
         self._attr_unique_id = f"{self.api.device_id}_{code}"
+        if code in TUYA_TECHNICAL_DP_CODES:
+            self._attr_entity_registry_enabled_default = False
         if dp_type == "Raw":
             self._attr_device_class = SensorDeviceClass.DATA_SIZE
             self._attr_native_unit_of_measurement = UnitOfInformation.BYTES

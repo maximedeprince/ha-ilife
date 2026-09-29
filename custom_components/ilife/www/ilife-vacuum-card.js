@@ -8,33 +8,85 @@
 const FLOOR_COLOR = "#c47b5e"; // cleaned floor (terracotta, like the app)
 const WALL_COLOR = "#43464f";  // walls / obstacles
 
+// ILIFE Clean `fault` bitmap labels (the problem sensor's `faults` attribute).
+const FAULTS_EN = {
+  bumper_fault: "Bumper stuck", obs_fault: "Obstacle sensor", wall_fault: "Wall sensor", cliff_fault: "Cliff sensor",
+  land_fault: "Lifted off the floor", nosewheel_fault: "Front wheel", l_brush_fault: "Left side brush",
+  r_brush_fault: "Right side brush", brush_fault: "Side brush", l_wheel_fault: "Left wheel", r_wheel_fault: "Right wheel",
+  m_brush_fault: "Main brush", fan_fault: "Fan", waterpump_fault: "Water pump", air_pump_fault: "Air pump",
+  garbage_fault: "Dust bin missing", water_box_fault: "Water tank missing", filter_fault: "Filter",
+  battery_fault: "Battery", gyro_fault: "Gyroscope", radar_fault: "Laser sensor", camera_fault: "Camera",
+  stuck_fault: "Robot stuck", flow_fault: "Water flow", other_fault: "Other fault", low_light_fault: "Too dark",
+  water1_fault: "Clean water tank", water2_fault: "Dirty water tank", explore_fault: "Mapping failed",
+};
+
 const T = {
   en: {
     start: "Start", pause: "Pause", resume: "Resume", stop: "Stop", dock: "Dock", locate: "Locate",
     overview: "Overview", settings: "Settings", suction: "Suction", water: "Water", mode: "Mode",
     carpet: "Carpet recognition", manual: "Manual control", schedules: "Schedules", history: "History",
-    empty_bin: "Empty bin", live: "Live", offline: "Offline", battery: "battery", last_run: "Last cleaning",
+    empty_bin: "Empty bin", live: "Live", offline: "Offline", battery: "battery", last_run: "Last cleaning", floor_plan: "Floor plan",
+    rooms: "Rooms", clean_rooms: "Clean selected", program: "Program", efficiency: "Cleaning efficiency", y_mop: "Y-shaped mopping", carpet_boost: "Carpet boost",
+    volume: "Volume", dnd: "Do not disturb", resume_after_charge: "Resume after charging", auto_empty: "Auto-empty at dock",
     cycles: "Cycles", area: "Area", total_time: "Total time", brush: "Brush", filter: "Filter",
     side_brush: "Side brush", reset: "Reset", cancel: "Cancel", reset_confirm: "Reset {part} to 100%?",
     m2_cleaned: "m² cleaned", minutes: "minutes", no_history: "No recent cleanings.",
     not_found: "No ILIFE vacuum entity found.", today: "Today", yesterday: "Yesterday",
     active: "active", session: "session", sessions: "sessions", sleeping: "standby",
     days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    dshort: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    whole_home: "Whole home", add: "Add", save: "Save", delete: "Delete", edit_schedule: "Schedule",
+    new_schedule: "New schedule", time: "Time", cycles_label: "Cycles", every_day: "Every day",
     st: { cleaning: "Cleaning", docked: "Docked", returning: "Returning to dock", paused: "Paused",
           idle: "Idle", error: "Error", unavailable: "Unavailable" },
     locale: "en-US",
+  },
+  pl: {
+    start: "Start", pause: "Pauza", resume: "Wznów", stop: "Stop", dock: "Stacja", locate: "Znajdź",
+    overview: "Przegląd", settings: "Ustawienia", suction: "Ssanie", water: "Woda", mode: "Tryb",
+    carpet: "Rozpoznawanie dywanów", manual: "Sterowanie ręczne", schedules: "Harmonogramy", history: "Historia",
+    empty_bin: "Opróżnij pojemnik", live: "Na żywo", offline: "Offline", battery: "baterii", last_run: "Ostatnie sprzątanie", floor_plan: "Plan mieszkania",
+    rooms: "Pokoje", clean_rooms: "Sprzątaj wybrane", program: "Program", efficiency: "Dokładność", y_mop: "Mopowanie w kształcie Y", carpet_boost: "Wzmocnienie na dywanie",
+    volume: "Głośność", dnd: "Nie przeszkadzać", resume_after_charge: "Dokończ po naładowaniu", auto_empty: "Auto-opróżnianie w stacji",
+    faults: {
+      bumper_fault: "Zablokowany zderzak", obs_fault: "Czujnik przeszkód", wall_fault: "Czujnik ściany", cliff_fault: "Czujnik upadku",
+      land_fault: "Podniesiony z podłogi", nosewheel_fault: "Przednie kółko", l_brush_fault: "Lewa szczotka boczna",
+      r_brush_fault: "Prawa szczotka boczna", brush_fault: "Szczotka boczna", l_wheel_fault: "Lewe koło", r_wheel_fault: "Prawe koło",
+      m_brush_fault: "Szczotka główna", fan_fault: "Wentylator", waterpump_fault: "Pompa wody", air_pump_fault: "Pompa powietrza",
+      garbage_fault: "Brak pojemnika na kurz", water_box_fault: "Brak zbiornika na wodę", filter_fault: "Filtr",
+      battery_fault: "Bateria", gyro_fault: "Żyroskop", radar_fault: "Czujnik laserowy", camera_fault: "Kamera",
+      stuck_fault: "Robot utknął", flow_fault: "Przepływ wody", other_fault: "Inny błąd", low_light_fault: "Za ciemno",
+      water1_fault: "Zbiornik czystej wody", water2_fault: "Zbiornik brudnej wody", explore_fault: "Błąd mapowania",
+    },
+    cycles: "Cykle", area: "Powierzchnia", total_time: "Łączny czas", brush: "Szczotka", filter: "Filtr",
+    side_brush: "Szczotka boczna", reset: "Resetuj", cancel: "Anuluj", reset_confirm: "Zresetować {part} do 100%?",
+    m2_cleaned: "m² posprzątane", minutes: "minut", no_history: "Brak ostatnich sprzątań.",
+    not_found: "Nie znaleziono odkurzacza ILIFE.", today: "Dziś", yesterday: "Wczoraj",
+    active: "aktywne", session: "sprzątanie", sessions: "sprzątań", sleeping: "uśpiony",
+    days: ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"],
+    dshort: ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"],
+    whole_home: "Całe mieszkanie", add: "Dodaj", save: "Zapisz", delete: "Usuń", edit_schedule: "Harmonogram",
+    new_schedule: "Nowy harmonogram", time: "Godzina", cycles_label: "Cykle", every_day: "Codziennie",
+    st: { cleaning: "Sprząta", docked: "W stacji", returning: "Wraca do stacji", paused: "Wstrzymany",
+          idle: "Bezczynny", error: "Błąd", unavailable: "Niedostępny" },
+    locale: "pl-PL",
   },
   fr: {
     start: "Démarrer", pause: "Pause", resume: "Reprendre", stop: "Stop", dock: "Base", locate: "Localiser",
     overview: "Aperçu", settings: "Réglages", suction: "Aspiration", water: "Eau", mode: "Mode",
     carpet: "Reconnaissance des tapis", manual: "Pilotage manuel", schedules: "Programmations", history: "Historique",
-    empty_bin: "Vider le bac", live: "En direct", offline: "Hors ligne", battery: "batterie", last_run: "Dernier passage",
+    empty_bin: "Vider le bac", live: "En direct", offline: "Hors ligne", battery: "batterie", last_run: "Dernier passage", floor_plan: "Plan",
+    volume: "Volume", dnd: "Ne pas déranger", resume_after_charge: "Reprendre après la recharge", auto_empty: "Vidage automatique",
+    rooms: "Pièces", clean_rooms: "Nettoyer la sélection", program: "Programme", efficiency: "Efficacité de nettoyage", y_mop: "Serpillière en Y", carpet_boost: "Boost tapis",
     cycles: "Cycles", area: "Surface", total_time: "Temps cumulé", brush: "Brosse", filter: "Filtre",
     side_brush: "Brosse latérale", reset: "Réinitialiser", cancel: "Annuler", reset_confirm: "Réinitialiser {part} à 100% ?",
     m2_cleaned: "m² nettoyés", minutes: "minutes", no_history: "Aucun nettoyage récent.",
     not_found: "Aucune entité aspirateur ILIFE trouvée.", today: "Aujourd'hui", yesterday: "Hier",
     active: "active", session: "session", sessions: "sessions", sleeping: "en veille",
     days: ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"],
+    dshort: ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"],
+    whole_home: "Toute la maison", add: "Ajouter", save: "Enregistrer", delete: "Supprimer", edit_schedule: "Programmation",
+    new_schedule: "Nouvelle programmation", time: "Heure", cycles_label: "Cycles", every_day: "Tous les jours",
     st: { cleaning: "Nettoyage en cours", docked: "À la base", returning: "Retour à la base", paused: "En pause",
           idle: "Inactif", error: "Erreur", unavailable: "Indisponible" },
     locale: "fr-FR",
@@ -63,7 +115,9 @@ function decodeCleanMap(b64) {
   return { w: BPR * 4, h: rows, cells };
 }
 
-function drawMapCells(canvas, cells, maxW, maxH) {
+// `path` (ILIFE Clean history): cleaning runs as flat [x0, y0, x1, y1, ...] lists
+// in the same cells as `cells`, drawn over the map.
+function drawMapCells(canvas, cells, maxW, maxH, path) {
   const ctx = canvas.getContext("2d");
   if (!cells || !cells.length) { canvas.width = 1; canvas.height = 1; ctx.clearRect(0, 0, 1, 1); return; }
   let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity, n1 = 0, n2 = 0;
@@ -86,6 +140,19 @@ function drawMapCells(canvas, cells, maxW, maxH) {
     ctx.fillStyle = c.t === floorType ? FLOOR_COLOR : WALL_COLOR;
     ctx.fillRect((c.x - minx + MG) * cell, (c.y - miny + MG) * cell, cell, cell);
   }
+  if (path && path.length) {
+    ctx.strokeStyle = "rgba(255,255,255,.9)";
+    ctx.lineWidth = cell * 0.5;
+    ctx.lineJoin = ctx.lineCap = "round";
+    const px = (v) => (v - minx + MG + 0.5) * cell, py = (v) => (v - miny + MG + 0.5) * cell;
+    for (const run of path) {
+      ctx.beginPath();
+      for (let i = 0; i + 1 < run.length; i += 2) {
+        if (i) ctx.lineTo(px(run[i]), py(run[i + 1])); else ctx.moveTo(px(run[i]), py(run[i + 1]));
+      }
+      ctx.stroke();
+    }
+  }
 }
 
 class IlifeVacuumCard extends HTMLElement {
@@ -99,7 +166,12 @@ class IlifeVacuumCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     const lang = (hass.language || hass.locale?.language || "en").toLowerCase();
-    this._lang = lang.startsWith("fr") ? "fr" : "en";
+    this._lang = lang.startsWith("fr") ? "fr" : lang.startsWith("pl") ? "pl" : "en";
+    // The room list is part of the layout: rebuild when the app's rooms change.
+    const vac = this._ent?.vacuum || this._config.entity;
+    const roomSig = JSON.stringify(hass.states[vac]?.attributes.rooms || {});
+    if (this._built && roomSig !== this._roomSig) this._built = false;
+    this._roomSig = roomSig;
     if (!this._built) this._build();
     this._update();
   }
@@ -123,16 +195,30 @@ class IlifeVacuumCard extends HTMLElement {
     const tk = (id) => reg[id]?.translation_key || "";
     const dom = (id) => id.split(".")[0];
     const e = { vacuum: cfgEnt || null, map: null, water: null, mode: null, carpet: null,
+      efficiency: null, program: null, ymop: null, boost: null, tsched: null,
+      dnd: null, resume: null, autoempty: null, volume: null, problem: null,
       battery: null, history: null, online: null, brush: null, side: null, filter: null,
-      curarea: null, curtime: null, buttons: {}, schedules: {} };
+      curarea: null, curtime: null, totalarea: null, totaltime: null, totalcount: null,
+      buttons: {}, schedules: {} };
     for (const id of ids) {
       const d = dom(id), k = tk(id);
       if (d === "vacuum") { if (!e.vacuum) e.vacuum = id; }
       else if (d === "camera") { if (k === "map" || !e.map) e.map = id; }
-      else if (d === "binary_sensor") { if (k === "online") e.online = id; }
-      else if (d === "select") { if (k === "water_level") e.water = id; else if (k === "cleaning_mode") e.mode = id; }
+      else if (d === "binary_sensor") { if (k === "online") e.online = id; else if (k === "problem") e.problem = id; }
+      else if (d === "number") { if (k === "volume") e.volume = id; }
+      else if (d === "select") {
+        if (k === "water_level") e.water = id;
+        else if (k === "cleaning_mode") e.mode = id;
+        else if (k === "cleaning_efficiency") e.efficiency = id;
+        else if (k === "cleaning_program") e.program = id;
+      }
       else if (d === "switch") {
         if (k === "carpet") e.carpet = id;
+        else if (k === "y_mop") e.ymop = id;
+        else if (k === "carpet_boost") e.boost = id;
+        else if (k === "do_not_disturb") e.dnd = id;
+        else if (k === "resume_after_charge") e.resume = id;
+        else if (k === "auto_empty") e.autoempty = id;
         else { const m = k.match(/^schedule_(\d+)_enable$/); if (m) (e.schedules[+m[1]] = e.schedules[+m[1]] || {}).enable = id; }
       } else if (d === "time") {
         const m = k.match(/^schedule_(\d+)_time$/); if (m) (e.schedules[+m[1]] = e.schedules[+m[1]] || {}).time = id;
@@ -144,27 +230,35 @@ class IlifeVacuumCard extends HTMLElement {
         const dc = hass.states[id]?.attributes.device_class;
         if (dc === "battery") e.battery = id;
         else if (k === "history") e.history = id;
+        else if (k === "schedules") e.tsched = id;
         else if (k === "main_brush") e.brush = id;
         else if (k === "side_brush") e.side = id;
         else if (k === "filter") e.filter = id;
         else if (k === "current_area") e.curarea = id;
         else if (k === "current_time") e.curtime = id;
+        else if (k === "total_area") e.totalarea = id;
+        else if (k === "total_time") e.totaltime = id;
+        else if (k === "total_count") e.totalcount = id;
       }
     }
     return e;
   }
 
-  _seg(label, key, opts) {
+  _seg(label, key, opts, stateObj) {
     if (!opts || !opts.length) return "";
+    // Show an option the way Home Assistant translates it ("plan_1" -> "Plan 1")
+    // when the entity has state translations; the raw value stays the data-val.
+    const fmt = (o) => (stateObj && this._hass.formatEntityState) ? this._hass.formatEntityState(stateObj, o) : o;
     return `<div class="vc-field"><div class="vc-mlabel">${label}</div>
       <div class="vc-seg" data-seg="${key}" style="--n:${opts.length}">
         <div class="vc-thumb"></div>
-        ${opts.map((o) => `<button class="vc-pill" data-val="${o}">${o}</button>`).join("")}
+        ${opts.map((o) => `<button class="vc-pill" data-val="${o}">${fmt(o)}</button>`).join("")}
       </div></div>`;
   }
 
   _build() {
     if (!this._hass) return;
+    this._tschedSig = null;  // the schedule list is re-rendered into the new DOM
     const hass = this._hass, t = this._t;
     this._ent = this._resolve();
     const e = this._ent;
@@ -182,6 +276,14 @@ class IlifeVacuumCard extends HTMLElement {
       </div>`;
     }
     const strip = t.days.map((d, i) => `<span class="vc-daypill" data-day="${i + 1}">${d[0]}</span>`).join("");
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    // ILIFE Clean laser models: {room id: name as in the app} (vacuum attribute).
+    const rooms = vs.attributes.rooms || {};
+    const roomIds = Object.keys(rooms).sort((a, b) => a - b);
+    const toggles = [[e.carpet, "mdi:rug", t.carpet], [e.boost, "mdi:rug", t.carpet_boost],
+      [e.ymop, "mdi:alpha-y-circle-outline", t.y_mop], [e.autoempty, "mdi:delete-restore", t.auto_empty],
+      [e.resume, "mdi:battery-sync", t.resume_after_charge], [e.dnd, "mdi:bell-sleep", t.dnd]].filter(([id]) => id);
+    const vol = e.volume && hass.states[e.volume];
 
     this.innerHTML = `
       <ha-card class="ilife-card">
@@ -378,6 +480,38 @@ class IlifeVacuumCard extends HTMLElement {
           .vc-dir:hover{background:var(--hover);color:var(--primary-text-color);}
           .vc-dir:active{transform:scale(.9);}
           .vc-dir ha-icon{--mdc-icon-size:22px;}
+          .vc-rooms .vc-sec{margin:18px 0 8px;}
+          .vc-passes{display:flex;gap:4px;background:var(--secondary-background-color);border-radius:999px;padding:3px;}
+          .vc-pass{border:none;background:transparent;border-radius:999px;padding:3px 10px;cursor:pointer;font-size:12px;font-weight:600;color:var(--secondary-text-color);}
+          .vc-pass.on{background:var(--card-background-color);color:var(--primary-text-color);box-shadow:var(--e1);}
+          .vc-chips{display:flex;flex-wrap:wrap;gap:6px;}
+          .vc-chip{border:1px solid var(--divider-color);background:transparent;border-radius:999px;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:500;color:var(--primary-text-color);transition:.15s;}
+          .vc-chip:hover{background:var(--hover);}
+          .vc-chip.on{background:color-mix(in srgb,var(--primary-color) 16%,transparent);border-color:var(--primary-color);color:var(--primary-color);font-weight:600;}
+          .vc-rgo{width:100%;height:42px;margin-top:10px;border:none;border-radius:12px;cursor:pointer;background:color-mix(in srgb,var(--primary-color) 14%,transparent);
+            color:var(--primary-color);font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s;}
+          .vc-rgo:disabled{opacity:.45;cursor:default;}
+          .vc-problem{display:flex;align-items:center;gap:5px;margin-top:3px;font-size:12px;font-weight:600;color:var(--error-color,#db4437);}
+          .vc-problem ha-icon{--mdc-icon-size:15px;}
+          .vc-volrow{grid-template-columns:auto 1fr auto;}
+          .vc-range{width:100%;accent-color:var(--primary-color);}
+          .vc-volval{font-size:13px;font-weight:600;color:var(--secondary-text-color);min-width:38px;text-align:right;}
+          .vc-sechead{display:flex;align-items:center;gap:10px;}
+          .vc-sadd{display:flex;align-items:center;gap:4px;border:none;border-radius:999px;padding:4px 10px 4px 6px;cursor:pointer;font-size:12px;font-weight:600;
+            background:color-mix(in srgb,var(--primary-color) 14%,transparent);color:var(--primary-color);}
+          .vc-sadd ha-icon{--mdc-icon-size:16px;}
+          .vc-trow{cursor:pointer;border-radius:12px;transition:.12s;}
+          .vc-trow:hover{background:var(--hover);}
+          .vc-trow.off{opacity:.55;}
+          .vc-tmeta{display:grid;grid-template-columns:auto 1fr;column-gap:12px;align-items:baseline;min-width:0;}
+          .vc-ttime{font-size:20px;font-weight:700;grid-row:1 / 3;}
+          .vc-tdays{font-size:13px;font-weight:600;}
+          .vc-tsum{font-size:12px;color:var(--secondary-text-color);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+          .vc-sedit{min-width:min(92vw,380px);}
+          .vc-srow{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+          .vc-setime{font-size:18px;padding:6px 12px;}
+          .vc-sedays .vc-chip{flex:1;padding:7px 0;text-align:center;}
+          .vc-rgo ha-icon{--mdc-icon-size:18px;}
           .vc-dust{width:100%;height:44px;margin-top:2px;border:1px solid var(--divider-color);border-radius:12px;background:transparent;cursor:pointer;color:var(--secondary-text-color);display:flex;align-items:center;justify-content:center;gap:8px;font-size:13px;font-weight:600;}
           .vc-dust:hover{background:var(--hover);color:var(--primary-text-color);}
           .vc-strip{display:flex;gap:6px;margin-bottom:8px;}
@@ -399,7 +533,8 @@ class IlifeVacuumCard extends HTMLElement {
         <div class="vc" data-el="root">
           <div class="vc-head">
             <div class="vc-ava"><ha-icon icon="mdi:robot-vacuum"></ha-icon><span class="vc-dot"></span></div>
-            <div class="vc-id"><div class="vc-name" data-el="name"></div><div class="vc-state"><span data-el="state"></span></div></div>
+            <div class="vc-id"><div class="vc-name" data-el="name"></div><div class="vc-state"><span data-el="state"></span></div>
+              <div class="vc-problem" data-el="problem" hidden><ha-icon icon="mdi:alert-circle"></ha-icon><span data-el="problemtxt"></span></div></div>
             <div class="vc-batt vc-num" data-el="batt"><ha-icon data-el="batticon" icon="mdi:battery"></ha-icon><span data-el="battval"></span><i class="vc-battbar" data-el="battbar"></i></div>
           </div>
           <div class="vc-cols">
@@ -418,6 +553,12 @@ class IlifeVacuumCard extends HTMLElement {
             <button class="vc-sbtn" data-act="dock"><ha-icon icon="mdi:home-import-outline"></ha-icon><span>${t.dock}</span></button>
             <button class="vc-sbtn" data-act="locate"><ha-icon icon="mdi:map-marker"></ha-icon><span>${t.locate}</span></button>
           </div>
+          ${roomIds.length ? `<div class="vc-rooms">
+            <div class="vc-sec"><span class="vc-mlabel">${t.rooms}</span>
+              <div class="vc-passes">${[1, 2].map((n) => `<button class="vc-pass" data-pass="${n}">${n}×</button>`).join("")}</div></div>
+            <div class="vc-chips">${roomIds.map((id) => `<button class="vc-chip" data-room="${id}">${esc(rooms[id])}</button>`).join("")}</div>
+            <button class="vc-rgo" data-el="roomgo" disabled><ha-icon icon="mdi:broom"></ha-icon><span data-el="roomgotxt">${t.clean_rooms}</span></button>
+          </div>` : ""}
           </div>
           <div class="vc-block blk-stats">
           <div class="vc-sec"><span class="vc-mlabel">${t.overview}</span></div>
@@ -428,8 +569,13 @@ class IlifeVacuumCard extends HTMLElement {
           ${this._seg(t.suction, "fan", (vs.attributes.fan_speed_list) || [])}
           ${this._seg(t.water, "water", (e.water && hass.states[e.water]?.attributes.options) || [])}
           ${this._seg(t.mode, "mode", (e.mode && hass.states[e.mode]?.attributes.options) || [])}
-          ${e.carpet ? `<div class="vc-list"><div class="vc-lrow"><span class="lbl"><ha-icon icon="mdi:rug"></ha-icon>${t.carpet}</span><span></span>
-            <label class="vc-switch"><input type="checkbox" data-el="carpet"><span class="vc-slider"></span></label></div></div>` : ""}
+          ${this._seg(t.program, "prog", (e.program && hass.states[e.program]?.attributes.options) || [], e.program && hass.states[e.program])}
+          ${this._seg(t.efficiency, "eff", (e.efficiency && hass.states[e.efficiency]?.attributes.options) || [])}
+          ${toggles.length ? `<div class="vc-list">${toggles.map(([id, icon, label]) => `<div class="vc-lrow"><span class="lbl"><ha-icon icon="${icon}"></ha-icon>${label}</span><span></span>
+            <label class="vc-switch"><input type="checkbox" class="vc-tog" data-ent="${id}"><span class="vc-slider"></span></label></div>`).join("")}</div>` : ""}
+          ${vol ? `<div class="vc-lrow vc-volrow"><span class="lbl"><ha-icon icon="mdi:volume-high"></ha-icon>${t.volume}</span>
+            <input type="range" class="vc-range" data-el="volume" min="${vol.attributes.min ?? 0}" max="${vol.attributes.max ?? 100}" step="${vol.attributes.step ?? 10}">
+            <span class="vc-volval vc-num" data-el="volval"></span></div>` : ""}
           ${Object.keys(e.buttons).length ? `
           <div class="vc-fold" data-el="fold"><span class="vc-mlabel">${t.manual}</span><ha-icon class="chev" icon="mdi:chevron-down"></ha-icon></div>
           <div data-el="padbox" hidden>
@@ -443,6 +589,9 @@ class IlifeVacuumCard extends HTMLElement {
           </div>
           ${sched ? `<div class="vc-block blk-sched"><div class="vc-sec"><span class="vc-mlabel">${t.schedules}</span><span class="r" data-el="schedcount"></span></div>
             <div class="vc-strip">${strip}</div><div class="vc-list">${sched}</div></div>` : ""}
+          ${e.tsched ? `<div class="vc-block blk-sched"><div class="vc-sec"><span class="vc-mlabel">${t.schedules}</span>
+            <span class="r vc-sechead"><span data-el="tschedcount"></span><button class="vc-sadd" data-el="tschedadd"><ha-icon icon="mdi:plus"></ha-icon>${t.add}</button></span></div>
+            <div class="vc-strip">${strip}</div><div class="vc-list" data-el="tschedlist"></div></div>` : ""}
           <div class="vc-block blk-history">
           <div class="vc-sec"><span class="vc-mlabel">${t.history}</span><span class="r" data-el="histcount"></span></div>
           <div class="vc-hist" data-el="hist"></div>
@@ -466,6 +615,24 @@ class IlifeVacuumCard extends HTMLElement {
               </div>
             </div>
           </div>
+          ${e.tsched ? `<div class="vc-modal" data-el="sedit" hidden>
+            <div class="vc-modal-bg" data-el="seditbg"></div>
+            <div class="vc-modal-panel vc-sedit">
+              <div class="vc-modal-head"><span class="t" data-el="sedittitle"></span><button data-el="seditclose">✕</button></div>
+              <div class="vc-srow"><span class="vc-mlabel">${t.time}</span><input type="time" class="vc-stime vc-setime" data-el="setime"></div>
+              <div class="vc-chips vc-sedays">${t.dshort.map((d, i) => `<button class="vc-chip" data-day="${i}">${d}</button>`).join("")}</div>
+              <div class="vc-seg" data-el="setype" style="--n:${roomIds.length ? 2 : 1}"><div class="vc-thumb"></div>
+                <button class="vc-pill" data-val="global">${t.whole_home}</button>
+                ${roomIds.length ? `<button class="vc-pill" data-val="rooms">${t.rooms}</button>` : ""}</div>
+              <div class="vc-chips vc-serooms" data-el="serooms">${roomIds.map((id) => `<button class="vc-chip" data-room="${id}">${esc(rooms[id])}</button>`).join("")}</div>
+              <div class="vc-srow"><span class="vc-mlabel">${t.cycles_label}</span>
+                <div class="vc-passes">${[1, 2, 3].map((n) => `<button class="vc-pass" data-cyc="${n}">${n}×</button>`).join("")}</div></div>
+              <div class="vc-confirm-btns">
+                <button class="vc-cbtn cancel" data-el="sedel">${t.delete}</button>
+                <button class="vc-cbtn ok" data-el="sesave">${t.save}</button>
+              </div>
+            </div>
+          </div>` : ""}
         </div>`;
 
     this._wire();
@@ -553,10 +720,31 @@ class IlifeVacuumCard extends HTMLElement {
       if (key === "fan") call("vacuum", "set_fan_speed", { entity_id: e.vacuum, fan_speed: val });
       else if (key === "water") call("select", "select_option", { entity_id: e.water, option: val });
       else if (key === "mode") call("select", "select_option", { entity_id: e.mode, option: val });
+      else if (key === "eff") call("select", "select_option", { entity_id: e.efficiency, option: val });
+      else if (key === "prog") call("select", "select_option", { entity_id: e.program, option: val });
     }));
-    q("carpet")?.addEventListener("change", (ev) => call("switch", ev.target.checked ? "turn_on" : "turn_off", { entity_id: e.carpet }));
+    this.querySelectorAll(".vc-tog").forEach((c) => c.addEventListener("change", () => call("switch", c.checked ? "turn_on" : "turn_off", { entity_id: c.dataset.ent })));
+    q("volume")?.addEventListener("input", (ev) => { q("volval").textContent = ev.target.value + "%"; });
+    q("volume")?.addEventListener("change", (ev) => call("number", "set_value", { entity_id: e.volume, value: Number(ev.target.value) }));
+    // Room selection lives in the card until "Clean selected" sends it.
+    this._roomSel = new Set([...(this._roomSel || [])].filter((id) => this.querySelector(`.vc-rooms .vc-chip[data-room="${id}"]`)));
+    this._passes = this._passes || 1;
+    this.querySelectorAll(".vc-rooms .vc-chip").forEach((c) => c.addEventListener("click", () => {
+      const id = c.dataset.room;
+      if (this._roomSel.has(id)) this._roomSel.delete(id); else this._roomSel.add(id);
+      this._syncRooms();
+    }));
+    this.querySelectorAll(".vc-rooms .vc-pass").forEach((b) => b.addEventListener("click", () => { this._passes = +b.dataset.pass; this._syncRooms(); }));
+    this._wireScheduleEditor(call);
+    q("roomgo")?.addEventListener("click", () => {
+      if (!this._roomSel.size) return;
+      call("ilife", "clean_rooms", { entity_id: e.vacuum, rooms: [...this._roomSel].map(Number), passes: this._passes });
+      this._roomSel.clear();
+      this._syncRooms();
+    });
+    this._syncRooms();
     this.querySelectorAll(".vc-sen").forEach((c) => c.addEventListener("change", () => call("switch", c.checked ? "turn_on" : "turn_off", { entity_id: c.dataset.ent })));
-    this.querySelectorAll(".vc-stime").forEach((t) => t.addEventListener("change", () => call("time", "set_value", { entity_id: t.dataset.ent, time: t.value + ":00" })));
+    this.querySelectorAll(".vc-stime[data-ent]").forEach((t) => t.addEventListener("change", () => call("time", "set_value", { entity_id: t.dataset.ent, time: t.value + ":00" })));
     q("fold")?.addEventListener("click", () => { this._padOpen = !this._padOpen; q("padbox").hidden = !this._padOpen; q("root").classList.toggle("padopen", this._padOpen); });
     q("mclose")?.addEventListener("click", () => this._showHistView(null));
     q("modalbg")?.addEventListener("click", () => this._showHistView(null));
@@ -567,6 +755,116 @@ class IlifeVacuumCard extends HTMLElement {
       this._confirm(tt.reset_confirm.replace("{part}", (labels[key] || "").toLowerCase()),
         () => call("button", "press", { entity_id: id }));
     });
+  }
+
+  // ILIFE Clean schedules: `schedules` sensor rows + a modal editor calling
+  // ilife.set_schedule / ilife.delete_schedule.
+  _wireScheduleEditor(call) {
+    const e = this._ent, q = (s) => this.querySelector(`[data-el="${s}"]`);
+    if (!e.tsched || !q("sedit")) return;
+    const close = () => { q("sedit").hidden = true; this._sedit = null; };
+    q("tschedadd").addEventListener("click", () => this._openSchedule(null));
+    q("seditclose").addEventListener("click", close);
+    q("seditbg").addEventListener("click", close);
+    this.querySelectorAll(".vc-sedays .vc-chip").forEach((c) => c.addEventListener("click", () => {
+      const d = +c.dataset.day, days = this._sedit.days;
+      if (days.has(d)) days.delete(d); else days.add(d);
+      this._syncSchedule();
+    }));
+    q("setype").querySelectorAll(".vc-pill").forEach((p) => p.addEventListener("click", (ev) => {
+      ev.stopPropagation(); this._sedit.type = p.dataset.val; this._syncSchedule();
+    }));
+    q("serooms").querySelectorAll(".vc-chip").forEach((c) => c.addEventListener("click", () => {
+      const r = +c.dataset.room, rooms = this._sedit.rooms;
+      if (rooms.has(r)) rooms.delete(r); else rooms.add(r);
+      this._syncSchedule();
+    }));
+    this.querySelectorAll(".vc-sedit .vc-pass").forEach((b) => b.addEventListener("click", () => {
+      this._sedit.cycles = +b.dataset.cyc; this._syncSchedule();
+    }));
+    q("sesave").addEventListener("click", () => {
+      const s = this._sedit, time = q("setime").value;
+      if (!s || !time || !s.days.size || (s.type === "rooms" && !s.rooms.size)) return;
+      const data = { entity_id: e.vacuum, time, days: [...s.days].sort(), cycles: s.cycles,
+        rooms: s.type === "rooms" ? [...s.rooms].sort((a, b) => a - b) : [] };
+      if (s.slot) data.slot = s.slot; else data.enabled = true;
+      call("ilife", "set_schedule", data);
+      close();
+    });
+    q("sedel").addEventListener("click", () => {
+      if (this._sedit?.slot) call("ilife", "delete_schedule", { entity_id: e.vacuum, slot: this._sedit.slot });
+      close();
+    });
+  }
+
+  _openSchedule(s) {
+    const t = this._t, q = (x) => this.querySelector(`[data-el="${x}"]`);
+    this._sedit = s
+      ? { slot: s.slot, days: new Set(s.days), type: s.type, rooms: new Set(s.rooms), cycles: s.cycles || 1 }
+      : { slot: null, days: new Set(), type: "global", rooms: new Set(), cycles: 1 };
+    q("setime").value = s ? s.time : "09:00";
+    q("sedittitle").textContent = s ? `${t.edit_schedule} ${s.slot}` : t.new_schedule;
+    q("sedel").hidden = !s;
+    q("sedit").hidden = false;
+    this._syncSchedule();
+  }
+
+  _syncSchedule() {
+    const s = this._sedit; if (!s) return;
+    const q = (x) => this.querySelector(`[data-el="${x}"]`);
+    this.querySelectorAll(".vc-sedays .vc-chip").forEach((c) => c.classList.toggle("on", s.days.has(+c.dataset.day)));
+    const pills = [...q("setype").querySelectorAll(".vc-pill")];
+    const idx = pills.findIndex((p) => p.dataset.val === s.type);
+    pills.forEach((p, i) => p.classList.toggle("active", i === idx));
+    const thumb = q("setype").querySelector(".vc-thumb");
+    if (thumb) thumb.style.transform = `translateX(calc(${Math.max(0, idx)} * 100%))`;
+    q("serooms").hidden = s.type !== "rooms";
+    q("serooms").querySelectorAll(".vc-chip").forEach((c) => c.classList.toggle("on", s.rooms.has(+c.dataset.room)));
+    this.querySelectorAll(".vc-sedit .vc-pass").forEach((b) => b.classList.toggle("on", +b.dataset.cyc === s.cycles));
+    q("sesave").disabled = !s.days.size || (s.type === "rooms" && !s.rooms.size);
+  }
+
+  _renderSchedules() {
+    const hass = this._hass, e = this._ent, t = this._t;
+    const list = this.querySelector('[data-el="tschedlist"]');
+    if (!e.tsched || !list) return;
+    const items = hass.states[e.tsched]?.attributes.schedules || [];
+    const sig = JSON.stringify(items) + this._lang;
+    if (sig !== this._tschedSig) {
+      this._tschedSig = sig;
+      const esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      list.innerHTML = items.length ? items.map((s) => {
+        const days = s.days.length === 7 ? t.every_day : s.days.map((d) => t.dshort[d]).join(", ");
+        const what = s.type === "rooms" ? (s.room_names || []).join(", ") : t.whole_home;
+        return `<div class="vc-lrow vc-trow${s.enabled ? "" : " off"}" data-slot="${s.slot}">
+          <span class="vc-tmeta"><span class="vc-ttime vc-num">${esc(s.time)}</span><span class="vc-tdays">${esc(days)}</span>
+            <span class="vc-tsum">${esc(what)} · ${s.cycles}×</span></span><span></span>
+          <label class="vc-switch"><input type="checkbox" class="vc-ten" data-slot="${s.slot}"${s.enabled ? " checked" : ""}><span class="vc-slider"></span></label></div>`;
+      }).join("") : `<div class="vc-empty">—</div>`;
+      list.querySelectorAll(".vc-trow").forEach((row) => row.addEventListener("click", (ev) => {
+        if (ev.target.closest(".vc-switch")) return;
+        this._openSchedule(items.find((s) => s.slot === +row.dataset.slot));
+      }));
+      list.querySelectorAll(".vc-ten").forEach((c) => c.addEventListener("change", () =>
+        hass.callService("ilife", "set_schedule", { entity_id: e.vacuum, slot: +c.dataset.slot, enabled: c.checked })));
+    }
+    const on = items.filter((s) => s.enabled);
+    const cnt = this.querySelector('[data-el="tschedcount"]');
+    if (cnt) cnt.textContent = `${on.length} ${t.active}`;
+    const onDays = new Set(on.flatMap((s) => s.days.map((d) => d + 1)));
+    this.querySelectorAll(".blk-sched .vc-daypill").forEach((p) => p.classList.toggle("on", onDays.has(+p.dataset.day)));
+  }
+
+  _syncRooms() {
+    const sel = this._roomSel || new Set();
+    this.querySelectorAll(".vc-rooms .vc-chip").forEach((c) => c.classList.toggle("on", sel.has(c.dataset.room)));
+    this.querySelectorAll(".vc-rooms .vc-pass").forEach((b) => b.classList.toggle("on", +b.dataset.pass === this._passes));
+    const go = this.querySelector('[data-el="roomgo"]');
+    if (go) {
+      go.disabled = !sel.size;
+      this.querySelector('[data-el="roomgotxt"]').textContent =
+        this._t.clean_rooms + (sel.size ? ` (${sel.size}) · ${this._passes}×` : "");
+    }
   }
 
   _confirm(msg, onOk) {
@@ -601,10 +899,10 @@ class IlifeVacuumCard extends HTMLElement {
   _showHistView(clean) {
     const modal = this.querySelector('[data-el="modal"]'); if (!modal) return;
     if (!clean) { modal.hidden = true; return; }
-    const dec = decodeCleanMap(clean.map);
+    const dec = decodeCleanMap(clean.map || clean.thumb);
     if (!dec || !dec.cells.length) { modal.hidden = true; return; }
     const mw = Math.min((window.innerWidth || 600) * 0.8, 600), mh = (window.innerHeight || 700) * 0.6;
-    drawMapCells(this.querySelector('[data-el="mcanvas"]'), dec.cells, mw, mh);
+    drawMapCells(this.querySelector('[data-el="mcanvas"]'), dec.cells, mw, mh, clean.path);
     const cap = this.querySelector('[data-el="mcap"]');
     if (cap) cap.textContent = this._fmtWhen(clean.start, true);
     const stats = this.querySelector('[data-el="mstats"]'), t = this._t;
@@ -670,7 +968,19 @@ class IlifeVacuumCard extends HTMLElement {
       } else q("batt").hidden = true;
     }
 
-    if (q("badgetxt")) q("badgetxt").textContent = (!online && e.online) ? t.sleeping : t.live;
+    if (q("badgetxt")) {
+      const mapAttrs = e.map ? hass.states[e.map]?.attributes || {} : {};
+      // ILIFE Clean: `map_path` says whether the path on the map belongs to this run
+      // ("live"), is left out mid-run ("hidden", or "waiting" for a first map), or
+      // is the last one ("last_run").
+      const livePath = mapAttrs.map_source === "realtime" || mapAttrs.map_path === "live";
+      q("badgetxt").textContent = (!online && e.online)
+        ? t.sleeping
+        : vs.state !== "cleaning" ? t.last_run
+        : livePath ? t.live
+        : ["hidden", "waiting"].includes(mapAttrs.map_path) ? t.floor_plan
+        : t.last_run;
+    }
 
     if (q("scrim")) {
       if (vs.state === "cleaning") {
@@ -697,11 +1007,37 @@ class IlifeVacuumCard extends HTMLElement {
     this._setActive("fan", vs.attributes.fan_speed);
     if (e.water) this._setActive("water", hass.states[e.water]?.state);
     if (e.mode) this._setActive("mode", hass.states[e.mode]?.state);
+    if (e.efficiency) this._setActive("eff", hass.states[e.efficiency]?.state);
+    if (e.program) this._setActive("prog", hass.states[e.program]?.state);
 
-    if (e.carpet && q("carpet")) { const cs = hass.states[e.carpet]; if (document.activeElement !== q("carpet")) q("carpet").checked = cs && cs.state === "on"; }
+    this.querySelectorAll(".vc-tog").forEach((c) => {
+      if (document.activeElement !== c) c.checked = hass.states[c.dataset.ent]?.state === "on";
+    });
+    if (e.volume && q("volume") && document.activeElement !== q("volume")) {
+      const v = Number(hass.states[e.volume]?.state);
+      if (Number.isFinite(v)) { q("volume").value = v; q("volval").textContent = v + "%"; }
+    }
+    if (q("problem")) {
+      const ps = e.problem && hass.states[e.problem];
+      const faults = ps && ps.state === "on" ? (ps.attributes.faults || []) : [];
+      q("problem").hidden = !faults.length;
+      q("problemtxt").textContent = faults.map((f) => (t.faults && t.faults[f]) || FAULTS_EN[f] || f.replace(/_fault$/, "").replace(/_/g, " ")).join(", ");
+    }
 
     const cleans = (e.history && hass.states[e.history]?.attributes.cleans) || [];
-    const cycles = cleans.length;
+    const sensorCycles = e.totalcount ? num(e.totalcount) : null;
+    const sensorArea = e.totalarea ? num(e.totalarea) : null;
+    const sensorMinutes = e.totaltime ? num(e.totaltime) : null;
+    const attrNum = (key) => {
+      const value = Number(vs.attributes[key]);
+      return Number.isFinite(value) ? value : null;
+    };
+    const directCycles = attrNum("total_clean_count");
+    const directArea = attrNum("total_clean_area");
+    const directMinutes = attrNum("total_clean_time");
+    const cycles = sensorCycles != null
+      ? sensorCycles
+      : (directCycles != null ? directCycles : cleans.length);
 
     // Hero map: live camera while cleaning, otherwise the last completed clean's full map
     const img = q("map"), hero = q("heromap");
@@ -719,8 +1055,16 @@ class IlifeVacuumCard extends HTMLElement {
       }
       if (!usedHero) { this._heroCells = null; hero.hidden = true; img.hidden = false; }
     }
-    const totArea = cleans.reduce((s, c) => s + (Number(c.area) || 0), 0);
-    const totMin = cleans.reduce((s, c) => s + (Number(c.duration) || 0), 0);
+    const totArea = sensorArea != null
+      ? sensorArea
+      : (directArea != null
+        ? directArea
+        : cleans.reduce((s, c) => s + (Number(c.area) || 0), 0));
+    const totMin = sensorMinutes != null
+      ? sensorMinutes
+      : (directMinutes != null
+        ? directMinutes
+        : cleans.reduce((s, c) => s + (Number(c.duration) || 0), 0));
     const fmtDur = (m) => m >= 60 ? Math.floor(m / 60) + "h" + (m % 60 ? String(m % 60).padStart(2, "0") : "") : m + "min";
     const brush = e.brush ? num(e.brush) : null, side = e.side ? num(e.side) : null, filt = e.filter ? num(e.filter) : null;
     if (q("kpis")) {
@@ -746,22 +1090,34 @@ class IlifeVacuumCard extends HTMLElement {
       q("hist").querySelectorAll(".vc-hrow").forEach((row) => {
         const c = cleans[Number(row.dataset.idx)];
         const th = row.querySelector(".vc-hthumb");
-        const dec = c && decodeCleanMap(c.map);
+        // ILIFE Clean sends `thumb` (same format) instead of `map`, so its rows get a
+        // thumbnail without the hero map switching away from the camera's render.
+        const dec = c && decodeCleanMap(c.map || c.thumb);
         if (dec && dec.cells.length) { const cv = document.createElement("canvas"); th.innerHTML = ""; th.appendChild(cv); drawMapCells(cv, dec.cells, 34, 34); }
         else th.innerHTML = `<ha-icon icon="mdi:broom" style="--mdc-icon-size:16px;color:var(--secondary-text-color)"></ha-icon>`;
-        row.addEventListener("click", () => { if (c && c.map) this._showHistView(c); });
+        row.addEventListener("click", () => { if (c && (c.map || c.thumb)) this._showHistView(c); });
       });
     }
 
-    const onDays = [];
-    for (let n = 1; n <= 7; n++) { const s = e.schedules[n]; if (s && s.enable && hass.states[s.enable]?.state === "on") onDays.push(n); }
-    if (q("schedcount")) q("schedcount").textContent = onDays.length + " " + t.active;
-    this.querySelectorAll(".vc-daypill").forEach((p) => p.classList.toggle("on", onDays.includes(Number(p.dataset.day))));
+    if (e.tsched) this._renderSchedules();
+    else {
+      const onDays = [];
+      for (let n = 1; n <= 7; n++) { const s = e.schedules[n]; if (s && s.enable && hass.states[s.enable]?.state === "on") onDays.push(n); }
+      if (q("schedcount")) q("schedcount").textContent = onDays.length + " " + t.active;
+      this.querySelectorAll(".vc-daypill").forEach((p) => p.classList.toggle("on", onDays.includes(Number(p.dataset.day))));
+    }
     this.querySelectorAll(".vc-sen").forEach((c) => { const s = hass.states[c.dataset.ent]; if (s && document.activeElement !== c) c.checked = s.state === "on"; });
-    this.querySelectorAll(".vc-stime").forEach((t2) => { const s = hass.states[t2.dataset.ent]; if (s && s.state && s.state.length >= 5 && document.activeElement !== t2) t2.value = s.state.slice(0, 5); });
+    this.querySelectorAll(".vc-stime[data-ent]").forEach((t2) => { const s = hass.states[t2.dataset.ent]; if (s && s.state && s.state.length >= 5 && document.activeElement !== t2) t2.value = s.state.slice(0, 5); });
   }
 
-  disconnectedCallback() { if (this._mapTimer) clearInterval(this._mapTimer); if (this._ro) this._ro.disconnect(); if (this._roMap) this._roMap.disconnect(); if (this._fitRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._fitRaf); }
+  connectedCallback() { if (this._built && !this._mapTimer) this._startMapTimer(); }
+  disconnectedCallback() {
+    if (this._mapTimer) clearInterval(this._mapTimer);
+    this._mapTimer = null;
+    if (this._ro) this._ro.disconnect();
+    if (this._roMap) this._roMap.disconnect();
+    if (this._fitRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this._fitRaf);
+  }
 }
 if (!customElements.get("ilife-vacuum-card")) customElements.define("ilife-vacuum-card", IlifeVacuumCard);
 
@@ -792,4 +1148,4 @@ if (!customElements.get("ilife-vacuum-card-editor")) customElements.define("ilif
 window.customCards = window.customCards || [];
 window.customCards.push({ type: "ilife-vacuum-card", name: "ILIFE Vacuum Card",
   description: "All-in-one card for the ILIFE vacuum (map, controls, schedules, clickable history).", preview: true });
-console.info("%c ILIFE-VACUUM-CARD %c loaded ", "color:#fff;background:#7cadff;border-radius:3px 0 0 3px;padding:2px", "background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px");
+console.info("%c ILIFE-VACUUM-CARD %c 0.7.0 loaded ", "color:#fff;background:#7cadff;border-radius:3px 0 0 3px;padding:2px", "background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px");

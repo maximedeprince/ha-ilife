@@ -16,9 +16,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import ILifeAccount, ILifeAuthError, ILifeDevice, ILifeError
 from .brands import DEFAULT_BRAND
@@ -34,9 +36,24 @@ from .const import (
     DEFAULT_START_MODE,
     DOMAIN,
     TUYA_CATEGORY_VACUUM,
+    TUYA_CONSUMABLES,
+    TUYA_DP_DUST_FREQUENCY,
+    TUYA_DP_RESET_MAP,
+    TUYA_DP_STATUS,
+    TUYA_DP_VOLUME,
+    TUYA_STATUS_CLEANING,
 )
-from .tuya_api import TuyaAuthError, TuyaClient, TuyaError, TuyaVacuum
-from .tuya_dynamic import parse_functions
+from .tuya_api import (
+    TuyaAuthError,
+    TuyaClient,
+    TuyaError,
+    TuyaVacuum,
+    parse_record_extend,
+)
+from .tuya_dynamic import parse_functions, range_values
+from .tuya_map import clean_map_path, clean_map_thumbnail
+from .tuya_rooms import CLEAN_ROOMS_CODE, parse_room_names
+from .tuya_schedule import parse_schedules
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,13 +71,29 @@ ILIFE_CLEAN_PLATFORMS = [
     Platform.VACUUM,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.NUMBER,
     Platform.SELECT,
     Platform.SWITCH,
+    Platform.CAMERA,
 ]
 PLATFORMS = ILIFEHOME_PLATFORMS
 
+# ILIFE Clean cleaning history: how many stored maps (one per clean) to list.
+HISTORY_SIZE = 10
+
 CARD_URL = "/ilife_cards/ilife-vacuum-card.js"
 CARD_FILENAME = "ilife-vacuum-card.js"
+
+
+def _is_ilife_card_resource(url: str) -> bool:
+    """Recognize both current and legacy/manual ILIFE card resource URLs."""
+    base = str(url or "").split("?", 1)[0].rstrip("/")
+    return (
+        base == CARD_URL
+        or base.endswith("/ilife-vacuum-card.js")
+        or base.startswith("/ilife_cards/ilife-vacuum-card-")
+    )
 
 
 class ILifeCoordinator(DataUpdateCoordinator):
@@ -163,6 +196,144 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
         self.spec: dict = {}
         self.spec_functions: dict = {}
         self._spec_loaded = False
+        # Product DPs outside the standard instruction set (see tuya_rooms). They
+        # change only when the map is edited in the app, so they are read slowly.
+        self.model: dict[str, dict] = {}
+        self.properties: dict[str, Any] = {}
+        self.room_names: dict[int, str] = {}
+        self._properties_next = 0.0
+        # Cleaning history: one stored map per clean (A30 Pro), newest first, in the
+        # card's "cleans" shape; start, area and duration come from each record.
+        self.history: list[dict] = []
+        self._history_cache: dict[str, dict] = {}
+        # Not during setup: listing the maps downloads up to HISTORY_SIZE files.
+        self._history_next = _time.monotonic() + 30
+        self._history_fast_until = 0.0
+        self._was_cleaning = False
+
+    @property
+    def supports_room_clean(self) -> bool:
+        return CLEAN_ROOMS_CODE in self.properties
+
+    @property
+    def schedules(self) -> dict[int, dict]:
+        return parse_schedules(self.properties)
+
+    def _watch_run_end(self, status: dict[str, Any]) -> None:
+        """A finished run is stored within a minute or so: look for it right away,
+        then every minute for a while, instead of on the idle 5-minute cadence."""
+        cleaning = str(status.get(TUYA_DP_STATUS) or "").lower() in TUYA_STATUS_CLEANING
+        if self._was_cleaning and not cleaning:
+            self._history_next = 0.0
+            self._history_fast_until = _time.monotonic() + 600
+        self._was_cleaning = cleaning
+
+    async def _async_update_history(self) -> None:
+        now = _time.monotonic()
+        if now < self._history_next:
+            return
+        self._history_next = now + (60 if now < self._history_fast_until else 300)
+        try:
+            records = await self.hass.async_add_executor_job(
+                self.api.stored_map_records, HISTORY_SIZE)
+        except TuyaError:
+            _LOGGER.debug("ILIFE Clean history unavailable", exc_info=True)
+            return
+        history = []
+        for record in records:
+            record_id = str(record["id"])
+            entry = self._history_cache.get(record_id)
+            if entry is None:
+                entry = await self._async_history_entry(record)
+            history.append(entry)
+        self._history_cache = {
+            entry["record_id"]: entry for entry in history if not entry.get("retry")
+        }
+        self.history = history
+
+    async def _async_history_entry(self, record: dict) -> dict:
+        """One history row with its map. A map that cannot be fetched right now is
+        retried next cycle; one that cannot be decoded is kept without a picture."""
+        record_id = str(record["id"])
+        try:
+            entry = self._history_entry(record)
+        except Exception:  # noqa: BLE001 — history is optional, never fail the poll
+            _LOGGER.debug("ILIFE Clean history record %s unreadable", record_id,
+                          exc_info=True)
+            entry = {"record_id": record_id, "start": 0, "area": None,
+                     "duration": None, "thumb": None, "path": []}
+        try:
+            files = await self.hass.async_add_executor_job(
+                self.api.stored_map_files, record)
+        except TuyaError:
+            _LOGGER.debug("ILIFE Clean history map %s unavailable", record_id,
+                          exc_info=True)
+            entry["retry"] = True
+            return entry
+        layout = next((f["payload"] for f in files if f.get("map_type") == 0), None)
+        if layout:
+            try:
+                entry["thumb"] = await self.hass.async_add_executor_job(
+                    clean_map_thumbnail, layout)
+                entry["path"] = await self.hass.async_add_executor_job(
+                    clean_map_path, layout)
+            except Exception:  # noqa: BLE001 — e.g. a map version we cannot decode
+                _LOGGER.debug("ILIFE Clean history map %s not decoded", record_id,
+                              exc_info=True)
+        return entry
+
+    @staticmethod
+    def _history_entry(record: dict) -> dict:
+        """One card history row from a stored map record."""
+        clean = parse_record_extend(record.get("extend"))
+        if clean:
+            # The robot writes its own wall-clock time: read it in HA's time zone.
+            started = clean["started"].replace(tzinfo=dt_util.get_default_time_zone())
+            start = int(started.timestamp())
+        else:
+            try:
+                start = int(record.get("time") or 0)
+            except (TypeError, ValueError):
+                start = 0
+        return {
+            "record_id": str(record["id"]),
+            "start": start,
+            "area": clean["area"] if clean else None,
+            "duration": clean["duration"] if clean else None,
+            "thumb": None,
+            "path": [],
+        }
+
+    def enum_range(self, code: str) -> list:
+        """Every value `code` accepts: the thing model's range, else the spec's."""
+        return (self.model.get(code) or {}).get("range") or range_values(
+            self.spec_functions, code)
+
+    async def async_write(self, code: str, value) -> None:
+        """Write one DP by the standard command when the spec covers it, else through
+        the thing model (e.g. suction "closed", which /specifications leaves out)."""
+        spec_range = range_values(self.spec_functions, code)
+        if code in self.spec_functions and (not spec_range or value in spec_range):
+            await self.hass.async_add_executor_job(self.api.send, code, value)
+        else:
+            await self.hass.async_add_executor_job(self.api.issue_properties, {code: value})
+            self.properties[code] = value
+            self._properties_next = 0.0
+        await self.async_request_refresh()
+
+    async def _async_update_properties(self) -> None:
+        if _time.monotonic() < self._properties_next:
+            return
+        self._properties_next = _time.monotonic() + 300
+        try:
+            self.properties = await self.hass.async_add_executor_job(self.api.properties)
+        except (TuyaError, AttributeError, TypeError):
+            _LOGGER.debug("ILIFE Clean product properties unavailable", exc_info=True)
+            return
+        try:
+            self.room_names = parse_room_names(self.properties)
+        except Exception:  # noqa: BLE001 — names are cosmetic, keep the old ones
+            _LOGGER.debug("ILIFE Clean room names unreadable", exc_info=True)
 
     async def _async_update_data(self) -> dict[str, Any]:
         if not self._spec_loaded:
@@ -172,13 +343,24 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
             except TuyaError:
                 _LOGGER.debug("ILIFE Clean specification unavailable", exc_info=True)
                 self.spec = {}
+            try:
+                self.model = await self.hass.async_add_executor_job(self.api.model)
+            except (TuyaError, AttributeError, TypeError):
+                _LOGGER.debug("ILIFE Clean thing model unavailable", exc_info=True)
             self._spec_loaded = True
+        await self._async_update_properties()
         try:
             detail = await self.hass.async_add_executor_job(self.api.detail)
         except TuyaError as err:
             raise UpdateFailed(str(err)) from err
         self.online = detail.get("online")
-        return {s["code"]: s.get("value") for s in detail.get("status") or [] if s.get("code")}
+        status = {s["code"]: s.get("value") for s in detail.get("status") or [] if s.get("code")}
+        self._watch_run_end(status)
+        try:
+            await self._async_update_history()
+        except Exception:  # noqa: BLE001 — the history must never fail the status poll
+            _LOGGER.debug("ILIFE Clean history update failed", exc_info=True)
+        return status
 
 
 async def _async_setup_ilifehome_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -207,6 +389,30 @@ async def _async_setup_ilifehome_entry(hass: HomeAssistant, entry: ConfigEntry) 
         "backend": BACKEND_ILIFEHOME, "account": account, "coordinators": coordinators,
         "platforms": ILIFEHOME_PLATFORMS,
     }
+
+
+def _async_remove_replaced_generic_entities(
+    hass: HomeAssistant, entry: ConfigEntry, coordinators: dict
+) -> None:
+    """Drop the generic entities that dedicated ones replaced in 0.7.0.
+
+    Consumable life used to be a raw minutes sensor, volume and dust-collection
+    frequency read-only sensors, and the resets switches. Their replacements have
+    another unique_id or domain, so the old ones would linger as "no longer
+    provided" forever.
+    """
+    registry = er.async_get(hass)
+    sensors = [*TUYA_CONSUMABLES, TUYA_DP_VOLUME, TUYA_DP_DUST_FREQUENCY]
+    switches = [TUYA_DP_RESET_MAP, *(reset for _, reset, _, _ in TUYA_CONSUMABLES.values())]
+    for device_id in coordinators:
+        for domain, codes in (("sensor", sensors), ("switch", switches)):
+            for code in codes:
+                entity_id = registry.async_get_entity_id(domain, DOMAIN, f"{device_id}_{code}")
+                if entity_id:
+                    entity = registry.async_get(entity_id)
+                    if entity and entity.config_entry_id == entry.entry_id:
+                        _LOGGER.info("ILIFE Clean: removing %s, replaced in 0.7.0", entity_id)
+                        registry.async_remove(entity_id)
 
 
 async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -245,6 +451,7 @@ async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry
         coordinators[dev["id"]] = coordinator
     if not coordinators:
         raise ConfigEntryNotReady("no device set up")
+    _async_remove_replaced_generic_entities(hass, entry, coordinators)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "backend": BACKEND_ILIFE_CLEAN, "client": client, "coordinators": coordinators,
@@ -358,14 +565,25 @@ async def _async_register_card_resource(hass: HomeAssistant) -> None:
         pass
     want = f"{CARD_URL}?v={version}"
     existing = [r for r in resources.async_items()
-                if str(r.get("url", "")).split("?")[0] == CARD_URL]
+                if _is_ilife_card_resource(r.get("url", ""))]
     try:
         if not existing:
             await resources.async_create_item({"res_type": "module", "url": want})
             _LOGGER.info("ILIFE: Lovelace card resource added (%s)", want)
-        elif existing[0].get("url") != want:
-            await resources.async_update_item(existing[0]["id"], {"res_type": "module", "url": want})
-            _LOGGER.info("ILIFE: Lovelace card resource updated to %s", want)
+        else:
+            primary = existing[0]
+            if primary.get("url") != want:
+                await resources.async_update_item(
+                    primary["id"], {"res_type": "module", "url": want}
+                )
+                _LOGGER.info("ILIFE: Lovelace card resource updated to %s", want)
+            for duplicate in existing[1:]:
+                if hasattr(resources, "async_delete_item"):
+                    await resources.async_delete_item(duplicate["id"])
+                elif duplicate.get("url") != want:
+                    await resources.async_update_item(
+                        duplicate["id"], {"res_type": "module", "url": want}
+                    )
     except Exception:  # noqa: BLE001
         # Loud on purpose: a silent failure here leaves the user with no card in the
         # picker and nothing to go on, which is how #23 was spent.

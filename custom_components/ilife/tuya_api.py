@@ -20,10 +20,12 @@ Synchronous (urllib): call from HA via hass.async_add_executor_job — mirrors a
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import hmac
 import json
 import logging
+import os.path
 import time
 import urllib.error
 import urllib.parse
@@ -59,6 +61,7 @@ TUYA_REGION_LABELS = {
 DEFAULT_TUYA_REGION = "eu"
 
 TOKEN_TTL_SAFETY = 60  # seconds; refresh this long before actual expiry
+MAX_MAP_FILE_SIZE = 8 * 1024 * 1024
 
 
 class TuyaError(Exception):
@@ -203,6 +206,23 @@ def _do(host, method, path, headers, body_bytes):
         raise TuyaError(f"non-JSON response from {path}: {snippet!r}") from e
 
 
+def parse_record_extend(extend: object) -> dict | None:
+    """What a stored map record's `extend` says about its clean, or None.
+
+    "00008_20260927_215313_002_003_04379_00710_00003": map number, the day and
+    wall-clock time (robot local) the clean started, area in m², duration in
+    minutes. The last three fields are not understood.
+    """
+    fields = str(extend or "").split("_")
+    if len(fields) < 5 or not all(field.isdigit() for field in fields[1:5]):
+        return None
+    try:
+        started = datetime.datetime.strptime(fields[1] + fields[2], "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+    return {"started": started, "area": int(fields[3]), "duration": int(fields[4])}
+
+
 class TuyaClient:
     """One Tuya Cloud Project session: self-authenticates with Access ID/Secret, then
     addresses one linked app account (UID) to list/read/control its devices."""
@@ -291,6 +311,184 @@ class TuyaClient:
             raise
         return True
 
+    def device_properties(self, device_id: str) -> dict:
+        """Every product DP by code, including those outside the standard instruction
+        set (room names, room cleaning). {code: value}."""
+        self.authenticate()
+        result = self._call(
+            "GET", f"/v2.0/cloud/thing/{urllib.parse.quote(device_id)}/shadow/properties"
+        ) or {}
+        if not isinstance(result, dict) or not isinstance(result.get("properties") or [], list):
+            raise TuyaError("unexpected shadow properties response")
+        return {
+            item["code"]: item.get("value")
+            for item in result.get("properties") or []
+            if isinstance(item, dict) and item.get("code")
+        }
+
+    def device_model(self, device_id: str) -> dict:
+        """The product's thing model: {code: {"type", "access", "range"|"min"|"max"...}}.
+
+        Wider than /specifications, which only covers the standard instruction set:
+        on the A30 Pro it is the one place that says suction and water accept
+        "closed", and what `cleaning_efficiency` can be set to.
+        """
+        self.authenticate()
+        result = self._call(
+            "GET", f"/v2.0/cloud/thing/{urllib.parse.quote(device_id)}/model"
+        ) or {}
+        if not isinstance(result, dict):
+            raise TuyaError("unexpected thing model response")
+        try:
+            model = json.loads(result.get("model") or "{}")
+        except (TypeError, ValueError) as err:
+            raise TuyaError("unexpected thing model response") from err
+        if not isinstance(model, dict):
+            raise TuyaError("unexpected thing model response")
+        out = {}
+        for service in model.get("services") or []:
+            if not isinstance(service, dict):
+                continue
+            for prop in service.get("properties") or []:
+                if not isinstance(prop, dict):
+                    continue
+                code = prop.get("code")
+                if code:
+                    out[code] = {
+                        **(prop.get("typeSpec") or {}),
+                        "access": prop.get("accessMode"),
+                    }
+        return out
+
+    def issue_properties(self, device_id: str, properties: dict) -> None:
+        """Write product DPs by code — the way to reach non-standard DPs."""
+        self.authenticate()
+        _LOGGER.debug("Tuya properties -> %s: %s", device_id, properties)
+        self._call(
+            "POST",
+            f"/v2.0/cloud/thing/{urllib.parse.quote(device_id)}/shadow/properties/issue",
+            {"properties": json.dumps(properties)},
+        )
+
+    def _sweeper_endpoint(self, device_id: str, action: str) -> str:
+        return f"/v1.0/users/sweepers/file/{urllib.parse.quote(device_id, safe='')}/{action}"
+
+    def _sweeper_call(self, path: str):
+        """GET a Robot Vacuum Open API endpoint, naming the missing service on 1106."""
+        try:
+            return self._call("GET", path)
+        except TuyaError as err:
+            if err.code == 1106:
+                raise TuyaError(
+                    f"{err}. For map access, also authorize the Robot Vacuum Open APIs "
+                    "service for this Tuya Cloud Project",
+                    err.code,
+                ) from err
+            raise
+
+    def realtime_map_files(self, device_id: str) -> list[dict]:
+        """Download the map files of the run in progress (empty when there is none).
+
+        Not every model publishes these: the A30 Pro only stores a map once a run
+        has finished, see `latest_stored_map`.
+        """
+        self.authenticate()
+        links = self._sweeper_call(self._sweeper_endpoint(device_id, "realtime-map")) or []
+        if not isinstance(links, list):
+            raise TuyaError("unexpected realtime-map response: result is not a list")
+        files = self._download_map_files(links, source="realtime")
+        _LOGGER.debug(
+            "Tuya realtime-map for %s: %s",
+            device_id,
+            [(item["map_type"], len(item["payload"]), item["payload"][:24].hex())
+             for item in files] or "no files",
+        )
+        return files
+
+    def stored_map_records(self, device_id: str, count: int = 5) -> list[dict]:
+        """Stored map records (`id`, `time`, `extend`), newest first. Models that
+        store a map per clean (A30 Pro) make this their cleaning history."""
+        self.authenticate()
+        params = urllib.parse.urlencode(
+            {"file_type": "pic", "page_no": 1, "page_size": count})
+        listing = self._sweeper_call(
+            f"{self._sweeper_endpoint(device_id, 'list')}?{params}") or {}
+        if not isinstance(listing, dict):
+            raise TuyaError("unexpected map list response: result is not an object")
+        records = [
+            item for item in listing.get("datas") or []
+            if isinstance(item, dict) and item.get("id")
+        ]
+
+        def _record_time(item: dict) -> int:
+            try:
+                return int(item.get("time") or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        return sorted(records, key=_record_time, reverse=True)
+
+    def latest_stored_map(self, device_id: str) -> dict | None:
+        """The newest stored map record (`id`, `time`, ...), or None if there is none."""
+        records = self.stored_map_records(device_id)
+        return records[0] if records else None
+
+    def stored_map_files(self, device_id: str, record: dict) -> list[dict]:
+        """Download the files of one stored map record from `latest_stored_map`."""
+        self.authenticate()
+        params = urllib.parse.urlencode({"id": record["id"]})
+        download = self._sweeper_call(
+            f"{self._sweeper_endpoint(device_id, 'download')}?{params}") or {}
+        if not isinstance(download, dict):
+            raise TuyaError("unexpected map download response: result is not an object")
+        links = [
+            {"map_type": map_type, "map_url": download.get(role), "role": role}
+            for role, map_type in (("app_map", 0), ("robot_map", 1))
+            if download.get(role)
+        ]
+        return self._download_map_files(links, source="stored", record=record)
+
+    @staticmethod
+    def _download_map_files(
+        links: list, *, source: str, record: dict | None = None
+    ) -> list[dict]:
+        """Fetch each signed map URL. The URLs themselves are never returned or logged."""
+        files = []
+        for item in links:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("map_url")
+            if not isinstance(url, str) or not url:
+                continue
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme != "https" or not parsed.netloc:
+                raise TuyaError("map API returned a non-HTTPS download URL")
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "HomeAssistant/ILIFE",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    payload = response.read(MAX_MAP_FILE_SIZE + 1)
+            except (urllib.error.HTTPError, urllib.error.URLError) as err:
+                raise TuyaError(f"map file download failed: {err}") from err
+            if len(payload) > MAX_MAP_FILE_SIZE:
+                raise TuyaError(f"map file exceeds the {MAX_MAP_FILE_SIZE}-byte limit")
+            files.append({
+                "map_type": item.get("map_type"),
+                "role": item.get("role"),
+                "source": source,
+                "record_id": record.get("id") if record else None,
+                "record_time": record.get("time") if record else None,
+                "filename": os.path.basename(urllib.parse.unquote(parsed.path)) or None,
+                "payload": payload,
+            })
+        return files
+
 
 class TuyaVacuum:
     """One bound device, addressed via a TuyaClient. Mirrors api.ILifeDevice's role."""
@@ -311,3 +509,24 @@ class TuyaVacuum:
 
     def send_many(self, commands: list[dict]) -> bool:
         return self.client.send_commands(self.device_id, commands)
+
+    def properties(self) -> dict:
+        return self.client.device_properties(self.device_id)
+
+    def model(self) -> dict:
+        return self.client.device_model(self.device_id)
+
+    def issue_properties(self, properties: dict) -> None:
+        self.client.issue_properties(self.device_id, properties)
+
+    def realtime_map_files(self) -> list[dict]:
+        return self.client.realtime_map_files(self.device_id)
+
+    def latest_stored_map(self) -> dict | None:
+        return self.client.latest_stored_map(self.device_id)
+
+    def stored_map_records(self, count: int = 5) -> list[dict]:
+        return self.client.stored_map_records(self.device_id, count)
+
+    def stored_map_files(self, record: dict) -> list[dict]:
+        return self.client.stored_map_files(self.device_id, record)
