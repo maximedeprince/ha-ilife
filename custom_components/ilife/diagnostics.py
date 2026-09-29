@@ -92,11 +92,18 @@ def _device_diag(coordinator: Any) -> dict[str, Any]:
     spec = getattr(coordinator, "spec", None)
     if spec:
         diag["specification"] = async_redact_data(spec, TO_REDACT)
-    # ILIFE Clean only: product DPs outside the standard set (room names, room
-    # cleaning, schedules...) — what a new feature for a model is decoded from.
+    # ILIFE Clean only: product DPs outside the standard set. Only which codes
+    # exist, their type and size: the values hold room names (MapRoomInfo*),
+    # schedules and per-room plans, and this file gets posted on public issues.
     properties = getattr(coordinator, "properties", None)
     if properties:
-        diag["properties"] = async_redact_data(properties, TO_REDACT)
+        diag["properties"] = {
+            code: {
+                "type": type(value).__name__,
+                "length": len(value) if isinstance(value, (str, bytes, list)) else None,
+            }
+            for code, value in properties.items()
+        }
     return diag
 
 

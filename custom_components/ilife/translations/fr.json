@@ -63,6 +63,9 @@
     },
     "room_unknown": {
       "message": "« {room} » n'est pas une pièce de la carte de cet aspirateur. Pièces connues : {rooms}."
+    },
+    "ilife_clean_only": {
+      "message": "« {action} » n'est disponible que sur les aspirateurs ILIFE Clean (Tuya) ; ILIFEHOME n'a pas de commande équivalente."
     }
   },
   "entity": {

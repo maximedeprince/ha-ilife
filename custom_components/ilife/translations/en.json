@@ -63,6 +63,9 @@
     },
     "room_unknown": {
       "message": "\"{room}\" is not a room on this vacuum's map. Known rooms: {rooms}."
+    },
+    "ilife_clean_only": {
+      "message": "\"{action}\" is only available on ILIFE Clean (Tuya) vacuums; ILIFEHOME has no equivalent command."
     }
   },
   "entity": {

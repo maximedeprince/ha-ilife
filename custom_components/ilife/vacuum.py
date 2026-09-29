@@ -159,8 +159,8 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
 
     def _unsupported(self, action):
         raise HomeAssistantError(
-            translation_domain=DOMAIN, translation_key="command_unsupported",
-            translation_placeholders={"action": action, "device": "ILIFEHOME"},
+            translation_domain=DOMAIN, translation_key="ilife_clean_only",
+            translation_placeholders={"action": action},
         )
 
     async def async_clean_rooms(self, rooms, passes=1):
@@ -444,19 +444,13 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
                                  rooms=None, cycles=None):
         """Create a schedule (no slot) or change the given fields of one."""
         properties = self.coordinator.properties
-        if not any(code in properties for code in SCHEDULE_CODES):
-            raise HomeAssistantError(
-                translation_domain=DOMAIN, translation_key="command_unsupported",
-                translation_placeholders={
-                    "action": "set schedule",
-                    "device": self.api.device.get("product_name") or "this vacuum",
-                },
-            )
         if slot is None:
             slot = next((n for n, code in enumerate(SCHEDULE_CODES, start=1)
-                         if parse_schedule(properties.get(code)) is None), None)
-            if slot is None:
-                raise HomeAssistantError("all 7 schedule slots are in use")
+                         if code in properties
+                         and parse_schedule(properties.get(code)) is None), None)
+            if slot is None and any(code in properties for code in SCHEDULE_CODES):
+                raise HomeAssistantError("all schedule slots are in use")
+        self._check_schedule_slot(slot, "set schedule")
         code = SCHEDULE_CODES[slot - 1]
         existing = properties.get(code)
         if parse_schedule(existing) is None and (time is None or not days):
@@ -471,4 +465,16 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         await self._write(code, value)
 
     async def async_delete_schedule(self, slot):
+        self._check_schedule_slot(slot, "delete schedule")
         await self._write(SCHEDULE_CODES[slot - 1], EMPTY_SLOT)
+
+    def _check_schedule_slot(self, slot, action):
+        """Only write a schedule slot this vacuum actually reports."""
+        if slot is None or SCHEDULE_CODES[slot - 1] not in self.coordinator.properties:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="command_unsupported",
+                translation_placeholders={
+                    "action": action,
+                    "device": self.api.device.get("product_name") or "this vacuum",
+                },
+            )

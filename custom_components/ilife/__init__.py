@@ -16,6 +16,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -35,7 +36,11 @@ from .const import (
     DEFAULT_START_MODE,
     DOMAIN,
     TUYA_CATEGORY_VACUUM,
+    TUYA_CONSUMABLES,
+    TUYA_DP_DUST_FREQUENCY,
+    TUYA_DP_RESET_MAP,
     TUYA_DP_STATUS,
+    TUYA_DP_VOLUME,
     TUYA_STATUS_CLEANING,
 )
 from .tuya_api import (
@@ -46,7 +51,6 @@ from .tuya_api import (
     parse_record_extend,
 )
 from .tuya_dynamic import parse_functions, range_values
-from .tuya_lz4 import LZ4BlockError
 from .tuya_map import clean_map_path, clean_map_thumbnail
 from .tuya_rooms import CLEAN_ROOMS_CODE, parse_room_names
 from .tuya_schedule import parse_schedules
@@ -240,23 +244,43 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
             record_id = str(record["id"])
             entry = self._history_cache.get(record_id)
             if entry is None:
-                entry = self._history_entry(record)
-                try:
-                    files = await self.hass.async_add_executor_job(
-                        self.api.stored_map_files, record)
-                    layout = next((f["payload"] for f in files if f.get("map_type") == 0),
-                                  None)
-                    if layout:
-                        entry["thumb"] = await self.hass.async_add_executor_job(
-                            clean_map_thumbnail, layout)
-                        entry["path"] = await self.hass.async_add_executor_job(
-                            clean_map_path, layout)
-                except (TuyaError, ValueError, LZ4BlockError):
-                    _LOGGER.debug("ILIFE Clean history map %s unavailable", record_id,
-                                  exc_info=True)
+                entry = await self._async_history_entry(record)
             history.append(entry)
-        self._history_cache = {entry["record_id"]: entry for entry in history}
+        self._history_cache = {
+            entry["record_id"]: entry for entry in history if not entry.get("retry")
+        }
         self.history = history
+
+    async def _async_history_entry(self, record: dict) -> dict:
+        """One history row with its map. A map that cannot be fetched right now is
+        retried next cycle; one that cannot be decoded is kept without a picture."""
+        record_id = str(record["id"])
+        try:
+            entry = self._history_entry(record)
+        except Exception:  # noqa: BLE001 — history is optional, never fail the poll
+            _LOGGER.debug("ILIFE Clean history record %s unreadable", record_id,
+                          exc_info=True)
+            entry = {"record_id": record_id, "start": 0, "area": None,
+                     "duration": None, "thumb": None, "path": []}
+        try:
+            files = await self.hass.async_add_executor_job(
+                self.api.stored_map_files, record)
+        except TuyaError:
+            _LOGGER.debug("ILIFE Clean history map %s unavailable", record_id,
+                          exc_info=True)
+            entry["retry"] = True
+            return entry
+        layout = next((f["payload"] for f in files if f.get("map_type") == 0), None)
+        if layout:
+            try:
+                entry["thumb"] = await self.hass.async_add_executor_job(
+                    clean_map_thumbnail, layout)
+                entry["path"] = await self.hass.async_add_executor_job(
+                    clean_map_path, layout)
+            except Exception:  # noqa: BLE001 — e.g. a map version we cannot decode
+                _LOGGER.debug("ILIFE Clean history map %s not decoded", record_id,
+                              exc_info=True)
+        return entry
 
     @staticmethod
     def _history_entry(record: dict) -> dict:
@@ -303,10 +327,13 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
         self._properties_next = _time.monotonic() + 300
         try:
             self.properties = await self.hass.async_add_executor_job(self.api.properties)
-        except TuyaError:
+        except (TuyaError, AttributeError, TypeError):
             _LOGGER.debug("ILIFE Clean product properties unavailable", exc_info=True)
             return
-        self.room_names = parse_room_names(self.properties)
+        try:
+            self.room_names = parse_room_names(self.properties)
+        except Exception:  # noqa: BLE001 — names are cosmetic, keep the old ones
+            _LOGGER.debug("ILIFE Clean room names unreadable", exc_info=True)
 
     async def _async_update_data(self) -> dict[str, Any]:
         if not self._spec_loaded:
@@ -318,7 +345,7 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
                 self.spec = {}
             try:
                 self.model = await self.hass.async_add_executor_job(self.api.model)
-            except TuyaError:
+            except (TuyaError, AttributeError, TypeError):
                 _LOGGER.debug("ILIFE Clean thing model unavailable", exc_info=True)
             self._spec_loaded = True
         await self._async_update_properties()
@@ -329,7 +356,10 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
         self.online = detail.get("online")
         status = {s["code"]: s.get("value") for s in detail.get("status") or [] if s.get("code")}
         self._watch_run_end(status)
-        await self._async_update_history()
+        try:
+            await self._async_update_history()
+        except Exception:  # noqa: BLE001 — the history must never fail the status poll
+            _LOGGER.debug("ILIFE Clean history update failed", exc_info=True)
         return status
 
 
@@ -359,6 +389,30 @@ async def _async_setup_ilifehome_entry(hass: HomeAssistant, entry: ConfigEntry) 
         "backend": BACKEND_ILIFEHOME, "account": account, "coordinators": coordinators,
         "platforms": ILIFEHOME_PLATFORMS,
     }
+
+
+def _async_remove_replaced_generic_entities(
+    hass: HomeAssistant, entry: ConfigEntry, coordinators: dict
+) -> None:
+    """Drop the generic entities that dedicated ones replaced in 0.7.0.
+
+    Consumable life used to be a raw minutes sensor, volume and dust-collection
+    frequency read-only sensors, and the resets switches. Their replacements have
+    another unique_id or domain, so the old ones would linger as "no longer
+    provided" forever.
+    """
+    registry = er.async_get(hass)
+    sensors = [*TUYA_CONSUMABLES, TUYA_DP_VOLUME, TUYA_DP_DUST_FREQUENCY]
+    switches = [TUYA_DP_RESET_MAP, *(reset for _, reset, _, _ in TUYA_CONSUMABLES.values())]
+    for device_id in coordinators:
+        for domain, codes in (("sensor", sensors), ("switch", switches)):
+            for code in codes:
+                entity_id = registry.async_get_entity_id(domain, DOMAIN, f"{device_id}_{code}")
+                if entity_id:
+                    entity = registry.async_get(entity_id)
+                    if entity and entity.config_entry_id == entry.entry_id:
+                        _LOGGER.info("ILIFE Clean: removing %s, replaced in 0.7.0", entity_id)
+                        registry.async_remove(entity_id)
 
 
 async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -397,6 +451,7 @@ async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry
         coordinators[dev["id"]] = coordinator
     if not coordinators:
         raise ConfigEntryNotReady("no device set up")
+    _async_remove_replaced_generic_entities(hass, entry, coordinators)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "backend": BACKEND_ILIFE_CLEAN, "client": client, "coordinators": coordinators,

@@ -744,7 +744,7 @@ class IlifeVacuumCard extends HTMLElement {
     });
     this._syncRooms();
     this.querySelectorAll(".vc-sen").forEach((c) => c.addEventListener("change", () => call("switch", c.checked ? "turn_on" : "turn_off", { entity_id: c.dataset.ent })));
-    this.querySelectorAll(".vc-stime").forEach((t) => t.addEventListener("change", () => call("time", "set_value", { entity_id: t.dataset.ent, time: t.value + ":00" })));
+    this.querySelectorAll(".vc-stime[data-ent]").forEach((t) => t.addEventListener("change", () => call("time", "set_value", { entity_id: t.dataset.ent, time: t.value + ":00" })));
     q("fold")?.addEventListener("click", () => { this._padOpen = !this._padOpen; q("padbox").hidden = !this._padOpen; q("root").classList.toggle("padopen", this._padOpen); });
     q("mclose")?.addEventListener("click", () => this._showHistView(null));
     q("modalbg")?.addEventListener("click", () => this._showHistView(null));
@@ -1107,7 +1107,7 @@ class IlifeVacuumCard extends HTMLElement {
       this.querySelectorAll(".vc-daypill").forEach((p) => p.classList.toggle("on", onDays.includes(Number(p.dataset.day))));
     }
     this.querySelectorAll(".vc-sen").forEach((c) => { const s = hass.states[c.dataset.ent]; if (s && document.activeElement !== c) c.checked = s.state === "on"; });
-    this.querySelectorAll(".vc-stime").forEach((t2) => { const s = hass.states[t2.dataset.ent]; if (s && s.state && s.state.length >= 5 && document.activeElement !== t2) t2.value = s.state.slice(0, 5); });
+    this.querySelectorAll(".vc-stime[data-ent]").forEach((t2) => { const s = hass.states[t2.dataset.ent]; if (s && s.state && s.state.length >= 5 && document.activeElement !== t2) t2.value = s.state.slice(0, 5); });
   }
 
   connectedCallback() { if (this._built && !this._mapTimer) this._startMapTimer(); }

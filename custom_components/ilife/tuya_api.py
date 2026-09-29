@@ -318,6 +318,8 @@ class TuyaClient:
         result = self._call(
             "GET", f"/v2.0/cloud/thing/{urllib.parse.quote(device_id)}/shadow/properties"
         ) or {}
+        if not isinstance(result, dict) or not isinstance(result.get("properties") or [], list):
+            raise TuyaError("unexpected shadow properties response")
         return {
             item["code"]: item.get("value")
             for item in result.get("properties") or []
@@ -335,13 +337,21 @@ class TuyaClient:
         result = self._call(
             "GET", f"/v2.0/cloud/thing/{urllib.parse.quote(device_id)}/model"
         ) or {}
+        if not isinstance(result, dict):
+            raise TuyaError("unexpected thing model response")
         try:
             model = json.loads(result.get("model") or "{}")
         except (TypeError, ValueError) as err:
             raise TuyaError("unexpected thing model response") from err
+        if not isinstance(model, dict):
+            raise TuyaError("unexpected thing model response")
         out = {}
         for service in model.get("services") or []:
+            if not isinstance(service, dict):
+                continue
             for prop in service.get("properties") or []:
+                if not isinstance(prop, dict):
+                    continue
                 code = prop.get("code")
                 if code:
                     out[code] = {

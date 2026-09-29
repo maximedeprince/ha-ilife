@@ -11,7 +11,7 @@ Custom Home Assistant integration for ILIFE robot vacuums.
 - **ILIFE Clean** app (Tuya cloud) — used by newer models. The T20s pairs
   via a `SmartLife-XXXX` Wi-Fi hotspot and the app itself documents linking
   through the Smart Life/Tuya ecosystem. Tested with the **ILIFE T20s**, the
-  **A30 Pro** and the **V20** (the V20 also renders a live map).
+  **A30 Pro** and the **V20** (both also render the map of their last clean).
 
 <p align="center">
   <img src="docs/screenshot-1.png" width="300" alt="Card — status, map and controls">
@@ -246,7 +246,7 @@ unless the Cloud Project is authorized for it.
 
 1. A laser model that maps. Confirmed on the **ILIFE V20** (contributed and
    tested in [#28](https://github.com/maximedeprince/ha-ilife/issues/28)) and the
-   **ILIFE A30 Pro**. The **T20s** publishes no map.
+   **ILIFE A30 Pro**. Not confirmed yet on the **T20s**.
 2. **Robot Vacuum Open APIs** authorized on your Tuya Cloud Project
    (**Cloud → your project → Service API → Go to Authorize**). Free, and not
    enabled by default.
@@ -256,14 +256,16 @@ names and areas, the cleaning path (runs solid, legs travelled without cleaning
 faint), the dock, the robot, virtual walls and no-go zones. The card picks it up
 on its own.
 
-**Not every model maps the same way.** The V20 publishes a realtime map while it
-cleans, so the camera follows the run. The A30 Pro only stores a map once a run is
-over: during a clean the camera shows the floor plan without a path (the card says
-*Floor plan*), and the finished run with its path appears within a minute of the
-robot docking. Its live path and position go to the app over Tuya's peer-to-peer
-channel only — the device log on iot.tuya.com shows no `path_data` report at any
-point of a run, and the realtime-map endpoint stays empty even with the app open
-and requesting it — so no cloud integration can draw them.
+**The map is the last clean's, not a live one.** On both confirmed models the
+realtime-map endpoint stays empty during a run, and the robot stores its map once
+the run is over; the integration then falls back to that stored map. In practice:
+during a clean the camera shows the previous floor plan without a path (the card
+says *Floor plan*), and the finished run with its path appears within a minute or
+so of the robot docking. The live path and position go to the app over Tuya's
+peer-to-peer channel only — on the A30 Pro the device log on iot.tuya.com shows no
+`path_data` report at any point of a run, even with the app open and requesting
+it — so no cloud integration can draw them. If your model does fill the realtime
+endpoint, the camera uses it and follows the run; please say so in an issue.
 
 **If the map stays unavailable**, the entity's `map_last_error` attribute says
 why, and the first failure is logged as a warning. `1106` there means the Robot

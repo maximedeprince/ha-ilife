@@ -277,7 +277,9 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
             if not cleaning or self._stored is None:
                 await self._async_refresh_stored()
             if self._stored is None:
-                if cleaning:
+                # Waiting for the first stored map is only worth the active rate
+                # until the model has shown it stores none (T20s): then back off.
+                if cleaning and not self._failures:
                     self._cache_metadata = {
                         **self._cache_metadata,
                         "map_path": "waiting",
