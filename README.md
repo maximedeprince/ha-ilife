@@ -33,14 +33,19 @@ in the config flow:
 |-------|---------------|-----------|----------------|
 | `ilife` | ILIFE (`com.ilife.home.global`) | 29416808 | eu |
 | `ava`   | AVA PRO MAX (`com.robot.ava`)   | 33417005 | us |
+| `zaco`  | ZACO Home (`com.zaco.home.robot`) | 28416395 | eu |
 
 Adding a brand = one entry in `brands.py` (its API-Gateway appKey/appSecret, OpenAccount
 appID/appVersion and default region) + it appears in the setup dropdown automatically.
-The AVA profile was validated end-to-end against the live us-east-1 cloud.
+The AVA profile was validated end-to-end against the live us-east-1 cloud. The ZACO
+profile's secret comes from [ha-zaco-vacuum](https://github.com/eXaminator/ha-zaco-vacuum)
+and is accepted by Aliyun's API gateway; it has not been tried with a ZACO account
+yet ([#14](https://github.com/maximedeprince/ha-ilife/issues/14)) — reports welcome.
 
 All of those fields except the **appSecret** are sent in the clear and can be read off a
-single captured request. The appSecret is not in the APK — Alibaba's SecurityGuard native
-library holds it — so it has to be lifted from the running app.
+single captured request. Some apps carry the appSecret in their Java code (ILIFE, ZACO);
+others leave it to Alibaba's SecurityGuard native library (AVA), and then it has to be
+lifted from the running app.
 **[How to recover a whitelabel's app secret](docs/whitelabel-appsecret-extraction.md)** is
 the full recipe: a Frida signing oracle, a memory sweep and offline HMAC validation. Bring
 back the four fields and the brand ships.
