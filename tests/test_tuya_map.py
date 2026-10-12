@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import io
 import os
 import pathlib
 import struct
@@ -67,6 +68,32 @@ def _lz4_literals(data: bytes) -> bytes:
     if len(data) < 15:
         return bytes([len(data) << 4]) + data
     return bytes([0xF0]) + _length_bytes(len(data) - 15) + data
+
+
+def _lz4_runs(data: bytes) -> bytes:
+    """A valid LZ4 block that compresses runs of one byte value: each run is one
+    literal and a match at offset 1. Enough to keep a large grid's compressed
+    length inside the header's 16 bits, as the robots' own encoder does."""
+    out, literals, index = bytearray(), bytearray(), 0
+    while index < len(data):
+        end = index
+        while end < len(data) and data[end] == data[index]:
+            end += 1
+        if end - index < 6:
+            literals += data[index:end]
+            index = end
+            continue
+        literals.append(data[index])
+        match = end - index - 1 - 4
+        token = (min(len(literals), 15) << 4) | min(match, 15)
+        out.append(token)
+        if len(literals) >= 15:
+            out += _length_bytes(len(literals) - 15)
+        out += literals + struct.pack("<H", 1)
+        if match >= 15:
+            out += _length_bytes(match - 15)
+        literals, index = bytearray(), end
+    return bytes(out) + _lz4_literals(bytes(literals))
 
 
 class TestLZ4:
@@ -148,15 +175,17 @@ def _frame(command: int, payload: bytes) -> bytes:
     return b"\xaa" + len(body).to_bytes(2, "big") + body + bytes([sum(body) & 0xFF])
 
 
-def _map(*, version=A30, grid=None, rooms=(), trailer=b"", compressed_length=None) -> bytes:
+def _map(*, version=A30, grid=None, rooms=(), trailer=b"", compressed_length=None,
+         width=WIDTH, height=HEIGHT, decompressed_length=None) -> bytes:
     if grid is None:
         grid = _grid(fill=OUT if version == A30 else 0)
     body = grid + bytes([0, len(rooms)]) + b"".join(rooms)
-    block = _lz4_literals(body)
+    block = _lz4_runs(body) if len(body) > 0xFFFF else _lz4_literals(body)
     header = bytearray([version]) + (1).to_bytes(2, "big") + b"\x01"
     header += struct.pack(
-        ">10H", WIDTH, HEIGHT, ORIGIN_X, ORIGIN_Y, RESOLUTION_CM,
-        PILE_X & 0xFFFF, PILE_Y & 0xFFFF, 0, len(body),
+        ">7HIH", width, height, ORIGIN_X, ORIGIN_Y, RESOLUTION_CM,
+        PILE_X & 0xFFFF, PILE_Y & 0xFFFF,
+        len(body) if decompressed_length is None else decompressed_length,
         len(block) if compressed_length is None else compressed_length,
     )
     return bytes(header) + block + trailer
@@ -191,6 +220,25 @@ class TestHeader:
         struct.pack_into(">H", raw, 12, 0)
         with pytest.raises(ValueError):
             tuya_map.decode_tuya_map(bytes(raw))
+
+    @pytest.mark.parametrize("version", [A30, V20])
+    def test_a_map_over_64_kib_decodes(self, version):
+        """#30: the decompressed length is 32 bits. Read as 16, a large home's map
+        failed with "LZ4 output exceeds the declared size"."""
+        width, height = 300, 220                      # 66,000 cells
+        floor = 0 if version == A30 else 0x07
+        cells = bytearray([OUT if version == A30 else 0]) * (width * height)
+        cells[width * 100 : width * 120] = bytes([floor]) * (width * 20)
+        raw = _map(version=version, grid=bytes(cells), rooms=[_room_block(0)],
+                   width=width, height=height)
+        decoded = tuya_map.decode_tuya_map(raw)
+        assert decoded["header"]["decompressed_length"] > 0xFFFF
+        assert len(decoded["cells"]) == width * height
+        assert decoded["cells"][width * 110] == (tuya_map.KIND_FLOOR, 0)
+
+    def test_implausible_decompressed_length(self):
+        with pytest.raises(ValueError):
+            tuya_map.decode_tuya_map(_map(decompressed_length=0xFFFFFFFF))
 
 
 class TestRooms:
@@ -383,6 +431,15 @@ class TestRendering:
             _map(trailer=_path_section([(0, 0), (10, 10)])), include_path=False
         )
         assert metadata["path_points"] == 0
+
+    def test_a_large_grid_is_drawn_at_a_smaller_scale(self):
+        pil = pytest.importorskip("PIL.Image", reason="Pillow ships with Home Assistant")
+        width, height = 800, 90                         # 72,000 cells
+        png, _ = tuya_map.render_tuya_map_png(_map(
+            grid=bytes([OUT]) * (width * height), width=width, height=height))
+        image = pil.open(io.BytesIO(png))
+        assert max(image.size) <= tuya_map.MAX_IMAGE_SIDE
+        assert image.size == (width * 3, height * 3)
 
     def test_labels_fold_what_the_builtin_font_cannot_draw(self):
         assert tuya_map._fold_to_latin1("Łazienka żółta") == "Lazienka zólta"

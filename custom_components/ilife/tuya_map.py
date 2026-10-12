@@ -3,10 +3,10 @@
 Two map versions are known, and they share everything but two details. All
 integers are big-endian.
 
-    header    24 bytes   version (u8), map id (u16), type (u8), then ten u16:
+    header    24 bytes   version (u8), map id (u16), type (u8), then seven u16:
                          width, height, origin x, origin y (signed), resolution
-                         in cm, dock x, dock y (signed), reserved, decompressed
-                         length, compressed length
+                         in cm, dock x, dock y (signed); then the decompressed
+                         length (u32) and the compressed length (u16)
     grid      LZ4 block  width * height cells, row 0 at the top, followed by the
                          room metadata (see `_parse_rooms`)
     path      13 bytes   preamble with the point count and compressed length, then
@@ -51,6 +51,11 @@ HEADER_LENGTH = 24
 ROOM_RECORD_LENGTH = 47
 PATH_PREAMBLE_LENGTH = 13
 MAX_PATH_POINTS = 2_000_000
+# A 4000 x 4000 grid; the 32-bit length field must not size the decompression alone.
+MAX_DECOMPRESSED_LENGTH = 16 * 1024 * 1024
+# Largest PNG side; a big grid is drawn at a smaller scale rather than as a
+# 30-megapixel image (#30's home did not fit 64 KiB of cells).
+MAX_IMAGE_SIDE = 2400
 
 # What a cell is, whatever the version encodes it as.
 KIND_OUTSIDE, KIND_FLOOR, KIND_WALL, KIND_CARPET, KIND_UNKNOWN = range(5)
@@ -107,9 +112,13 @@ def _points(data: bytes, start: int, count: int) -> list[list[int]]:
 
 
 def _parse_header(raw: bytes) -> dict[str, int]:
+    """The decompressed length is 32 bits wide (Tuya's `totalCount`). Read as the
+    low 16 bits of it, any map over 64 KiB decompressed — a grid of 300 x 220
+    cells, a large home — failed with "LZ4 output exceeds the declared size" (#30).
+    """
     if len(raw) < HEADER_LENGTH:
         raise ValueError("Tuya map is shorter than its 24-byte header")
-    fields = struct.unpack(">10H", raw[4:HEADER_LENGTH])
+    fields = struct.unpack(">7HIH", raw[4:HEADER_LENGTH])
     return {
         "version": raw[0],
         "map_id": int.from_bytes(raw[1:3], "big"),
@@ -121,8 +130,8 @@ def _parse_header(raw: bytes) -> dict[str, int]:
         "resolution_cm": fields[4],
         "pile_x": _signed16(fields[5]),
         "pile_y": _signed16(fields[6]),
-        "decompressed_length": fields[8],
-        "compressed_length": fields[9],
+        "decompressed_length": fields[7],
+        "compressed_length": fields[8],
     }
 
 
@@ -413,6 +422,9 @@ def decode_tuya_map(
     compressed_end = HEADER_LENGTH + header["compressed_length"]
     if compressed_end > len(layout):
         raise ValueError("Tuya map has truncated compressed layout data")
+    if header["decompressed_length"] > MAX_DECOMPRESSED_LENGTH:
+        raise ValueError(
+            f"implausible Tuya map size: {header['decompressed_length']} bytes")
     decoded = decompress_block(
         layout[HEADER_LENGTH:compressed_end], header["decompressed_length"]
     )
@@ -533,6 +545,7 @@ def render_tuya_map_png(
         room["name"] = (room_names or {}).get(room["room_id"], room["name"])
     header = decoded["header"]
     width, height = header["width"], header["height"]
+    scale = max(1, min(scale, MAX_IMAGE_SIDE // max(width, height, 1)))
     room_ids = {room["room_id"] for room in decoded["rooms"]}
 
     # One pass over the grid: colour each cell and gather each room's centroid.
