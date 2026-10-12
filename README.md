@@ -11,7 +11,7 @@ Custom Home Assistant integration for ILIFE robot vacuums.
 - **ILIFE Clean** app (Tuya cloud) — used by newer models. The T20s pairs
   via a `SmartLife-XXXX` Wi-Fi hotspot and the app itself documents linking
   through the Smart Life/Tuya ecosystem. Tested with the **ILIFE T20s**, the
-  **A30 Pro** and the **V20** (both also render the map of their last clean).
+  **A30 Pro** and the **V20**, all three with the map of their last clean.
 
 <p align="center">
   <img src="docs/screenshot-1.png" width="300" alt="Card — status, map and controls">
@@ -33,14 +33,19 @@ in the config flow:
 |-------|---------------|-----------|----------------|
 | `ilife` | ILIFE (`com.ilife.home.global`) | 29416808 | eu |
 | `ava`   | AVA PRO MAX (`com.robot.ava`)   | 33417005 | us |
+| `zaco`  | ZACO Home (`com.zaco.home.robot`) | 28416395 | eu |
 
 Adding a brand = one entry in `brands.py` (its API-Gateway appKey/appSecret, OpenAccount
 appID/appVersion and default region) + it appears in the setup dropdown automatically.
-The AVA profile was validated end-to-end against the live us-east-1 cloud.
+The AVA profile was validated end-to-end against the live us-east-1 cloud. The ZACO
+profile's secret comes from [ha-zaco-vacuum](https://github.com/eXaminator/ha-zaco-vacuum)
+and is accepted by Aliyun's API gateway; it has not been tried with a ZACO account
+yet ([#14](https://github.com/maximedeprince/ha-ilife/issues/14)) — reports welcome.
 
 All of those fields except the **appSecret** are sent in the clear and can be read off a
-single captured request. The appSecret is not in the APK — Alibaba's SecurityGuard native
-library holds it — so it has to be lifted from the running app.
+single captured request. Some apps carry the appSecret in their Java code (ILIFE, ZACO);
+others leave it to Alibaba's SecurityGuard native library (AVA), and then it has to be
+lifted from the running app.
 **[How to recover a whitelabel's app secret](docs/whitelabel-appsecret-extraction.md)** is
 the full recipe: a Frida signing oracle, a memory sweep and offline HMAC validation. Bring
 back the four fields and the brand ships.
@@ -88,7 +93,9 @@ Two things worth knowing about how these robots take orders:
   on its own. Pressing start on a *paused* vacuum resumes it instead of restarting.
 - **The Cleaning mode select is a command, not a setting.** Choosing *zone*, *spot* or
   *edge* tells the robot to go and do that now — it is how you ask for anything other
-  than a full clean.
+  than a full clean. It is sent the way Start is, with the run and pause flags, since
+  some models (A30 Pro) ignore a mode written on its own; choosing the dock value
+  sends the robot home, like Return to base.
 
 ## Installation (HACS)
 
@@ -103,11 +110,10 @@ Edit a dashboard → **Add card** → search **ILIFE Vacuum Card** → pick your
 in the visual editor. Everything else (map, sensors, schedules…) is detected
 automatically. No YAML needed.
 
-The card shows the sections its entities exist for, so it is deliberately smaller on
-the **ILIFE Clean** backend: Tuya has no cleaning-history or schedule endpoint for
-these vacuums, so the history list and the schedule editor are not drawn. Controls,
-battery, current clean, lifetime totals and the settings the device advertises are.
-The map tile appears only on models that publish one — see
+The card shows the sections its entities exist for. On the **ILIFE Clean** backend,
+the rooms, the schedule editor and the cleaning history appear on models that report
+them (see [Rooms, programs and schedules](#rooms-programs-and-schedules-ilife-clean)),
+and the map tile says *No map yet* until the camera has one — see
 [The map on ILIFE Clean](#the-map-on-ilife-clean).
 
 The card is registered automatically for storage‑mode dashboards. For
@@ -138,10 +144,10 @@ the same one-time step used by other Tuya-based integrations (e.g.
    center, so if Central Europe fails, try Western Europe.
 2. Subscribe the project to the **IoT Core** / **Authorization** / **Smart
    Home Basic Service** API groups (Tuya prompts for this during project
-   creation, free tier). If you want the map, also authorize **Robot Vacuum
-   Open APIs** under the project's **Service API** tab — it is free, it is not
-   subscribed by default, and the map lives behind it. Everything else works
-   without it.
+   creation, free tier). If you want the map and the cleaning history, also
+   authorize the **Sweeping Robot Open Service** under the project's **Service
+   API** tab — it is free, it is not subscribed by default, and the maps live
+   behind it. Everything else works without it.
 3. On the project's **Overview** tab, copy the **Access ID (Client ID)** and
    **Access Secret (Client Secret)**.
 4. **Move the vacuum to the Tuya Smart app.** The ILIFE Clean app has no
@@ -244,19 +250,21 @@ unless the Cloud Project is authorized for it.
 
 **What it needs:**
 
-1. A laser model that maps. Confirmed on the **ILIFE V20** (contributed and
-   tested in [#28](https://github.com/maximedeprince/ha-ilife/issues/28)) and the
-   **ILIFE A30 Pro**. Not confirmed yet on the **T20s**.
-2. **Robot Vacuum Open APIs** authorized on your Tuya Cloud Project
+1. A model that stores a map. Confirmed on the **ILIFE V20** (contributed and
+   tested in [#28](https://github.com/maximedeprince/ha-ilife/issues/28)), the
+   **ILIFE A30 Pro** and the **ILIFE T20s**
+   ([#24](https://github.com/maximedeprince/ha-ilife/issues/24)).
+2. The **Sweeping Robot Open Service** authorized on your Tuya Cloud Project
    (**Cloud → your project → Service API → Go to Authorize**). Free, and not
-   enabled by default.
+   enabled by default. That is the name the Tuya console lists it under; earlier
+   versions of this README called it *Robot Vacuum Open APIs*.
 
 With both, you get a `camera.<vacuum>_map` entity: rooms in colour with their
 names and areas, the cleaning path (runs solid, legs travelled without cleaning
 faint), the dock, the robot, virtual walls and no-go zones. The card picks it up
 on its own.
 
-**The map is the last clean's, not a live one.** On both confirmed models the
+**The map is the last clean's, not a live one.** On every confirmed model the
 realtime-map endpoint stays empty during a run, and the robot stores its map once
 the run is over; the integration then falls back to that stored map. In practice:
 during a clean the camera shows the previous floor plan without a path (the card
@@ -267,12 +275,16 @@ peer-to-peer channel only — on the A30 Pro the device log on iot.tuya.com show
 it — so no cloud integration can draw them. If your model does fill the realtime
 endpoint, the camera uses it and follows the run; please say so in an issue.
 
-**If the map stays unavailable**, the entity's `map_last_error` attribute says
-why, and the first failure is logged as a warning. `1106` there means the Robot
-Vacuum service is not authorized — that is step 2 above. "Tuya returned no map
-for this device" means the authorization is fine and this model has neither a
-realtime nor a stored map; the integration then backs off rather than polling a
-map that is never coming.
+**If the map stays unavailable**, the first failure is logged as a warning that
+says why — look in the Home Assistant log, since an unavailable entity shows no
+attributes (once a map has been shown, a later failure also lands in the camera's
+`map_last_error` attribute). `1106` or `28841101` there means the Sweeping Robot
+service is not authorized — that is step 2 above. "Tuya returned no map for this
+device" means the authorization is fine and this model has neither a realtime nor
+a stored map; the integration then backs off rather than polling a map that is
+never coming. "Downloaded but could not be decoded" means the map arrived in a
+shape the decoder does not know: please open an issue with the diagnostics file,
+which describes the map file without including the floor plan.
 
 ## Rooms, programs and schedules (ILIFE Clean)
 

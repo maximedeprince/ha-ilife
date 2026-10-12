@@ -25,7 +25,7 @@ const T = {
     start: "Start", pause: "Pause", resume: "Resume", stop: "Stop", dock: "Dock", locate: "Locate",
     overview: "Overview", settings: "Settings", suction: "Suction", water: "Water", mode: "Mode",
     carpet: "Carpet recognition", manual: "Manual control", schedules: "Schedules", history: "History",
-    empty_bin: "Empty bin", live: "Live", offline: "Offline", battery: "battery", last_run: "Last cleaning", floor_plan: "Floor plan",
+    empty_bin: "Empty bin", live: "Live", offline: "Offline", battery: "battery", last_run: "Last cleaning", floor_plan: "Floor plan", no_map: "No map yet",
     rooms: "Rooms", clean_rooms: "Clean selected", program: "Program", efficiency: "Cleaning efficiency", y_mop: "Y-shaped mopping", carpet_boost: "Carpet boost",
     volume: "Volume", dnd: "Do not disturb", resume_after_charge: "Resume after charging", auto_empty: "Auto-empty at dock",
     cycles: "Cycles", area: "Area", total_time: "Total time", brush: "Brush", filter: "Filter",
@@ -45,7 +45,7 @@ const T = {
     start: "Start", pause: "Pauza", resume: "Wznów", stop: "Stop", dock: "Stacja", locate: "Znajdź",
     overview: "Przegląd", settings: "Ustawienia", suction: "Ssanie", water: "Woda", mode: "Tryb",
     carpet: "Rozpoznawanie dywanów", manual: "Sterowanie ręczne", schedules: "Harmonogramy", history: "Historia",
-    empty_bin: "Opróżnij pojemnik", live: "Na żywo", offline: "Offline", battery: "baterii", last_run: "Ostatnie sprzątanie", floor_plan: "Plan mieszkania",
+    empty_bin: "Opróżnij pojemnik", live: "Na żywo", offline: "Offline", battery: "baterii", last_run: "Ostatnie sprzątanie", floor_plan: "Plan mieszkania", no_map: "Brak mapy",
     rooms: "Pokoje", clean_rooms: "Sprzątaj wybrane", program: "Program", efficiency: "Dokładność", y_mop: "Mopowanie w kształcie Y", carpet_boost: "Wzmocnienie na dywanie",
     volume: "Głośność", dnd: "Nie przeszkadzać", resume_after_charge: "Dokończ po naładowaniu", auto_empty: "Auto-opróżnianie w stacji",
     faults: {
@@ -75,7 +75,7 @@ const T = {
     start: "Démarrer", pause: "Pause", resume: "Reprendre", stop: "Stop", dock: "Base", locate: "Localiser",
     overview: "Aperçu", settings: "Réglages", suction: "Aspiration", water: "Eau", mode: "Mode",
     carpet: "Reconnaissance des tapis", manual: "Pilotage manuel", schedules: "Programmations", history: "Historique",
-    empty_bin: "Vider le bac", live: "En direct", offline: "Hors ligne", battery: "batterie", last_run: "Dernier passage", floor_plan: "Plan",
+    empty_bin: "Vider le bac", live: "En direct", offline: "Hors ligne", battery: "batterie", last_run: "Dernier passage", floor_plan: "Plan", no_map: "Pas encore de carte",
     volume: "Volume", dnd: "Ne pas déranger", resume_after_charge: "Reprendre après la recharge", auto_empty: "Vidage automatique",
     rooms: "Pièces", clean_rooms: "Nettoyer la sélection", program: "Programme", efficiency: "Efficacité de nettoyage", y_mop: "Serpillière en Y", carpet_boost: "Boost tapis",
     cycles: "Cycles", area: "Surface", total_time: "Temps cumulé", brush: "Brosse", filter: "Filtre",
@@ -393,6 +393,8 @@ class IlifeVacuumCard extends HTMLElement {
           .vc-map .vig{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 -30px 40px -30px rgba(0,0,0,.25);}
           .vc-mapimg{position:relative;max-width:70%;max-height:78%;object-fit:contain;z-index:1;filter:drop-shadow(0 4px 10px rgba(0,0,0,.25));}
           .vc.offline .vc-mapimg{filter:saturate(.5) opacity(.7);}
+          .vc-nomap{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:13px;color:var(--secondary-text-color);}
+          .vc-nomap ha-icon{--mdc-icon-size:28px;opacity:.6;}
           .vc-badge{position:absolute;top:10px;left:10px;z-index:3;display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;
             padding:4px 10px;border-radius:999px;background:color-mix(in srgb,var(--card-background-color) 72%,transparent);
             color:var(--secondary-text-color);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--divider-color) 60%,transparent);backdrop-filter:blur(6px);}
@@ -543,6 +545,7 @@ class IlifeVacuumCard extends HTMLElement {
             <div class="glow"></div><div class="grid"></div>
             <img class="vc-mapimg" data-el="map" alt="map">
             <canvas class="vc-mapimg" data-el="heromap" hidden></canvas>
+            <div class="vc-nomap" data-el="nomap" hidden><ha-icon icon="mdi:map-search-outline"></ha-icon><span>${t.no_map}</span></div>
             <div class="vig"></div>
             <span class="vc-badge"><span class="bd"></span><span data-el="badgetxt">${t.live}</span></span>
             <div class="vc-scrim vc-num" data-el="scrim" hidden></div>
@@ -893,6 +896,13 @@ class IlifeVacuumCard extends HTMLElement {
     const e = this._ent; if (!e || !e.map) return;
     const img = this.querySelector('[data-el="map"]'); const st = this._hass.states[e.map];
     const pic = st && st.attributes.entity_picture; if (!img || !pic) return;
+    // Keep fetching while the camera is unavailable: the ILIFEHOME camera renders on
+    // request, and only becomes available once it has. What a failed fetch shows is
+    // the "no map" placeholder, not a broken image (#30).
+    if (!img.onerror) {
+      img.onerror = () => { if (this._imgOk !== false) { this._imgOk = false; this._update(); } };
+      img.onload = () => { if (this._imgOk !== true) { this._imgOk = true; this._update(); } };
+    }
     img.src = this._hass.hassUrl(pic) + (pic.includes("?") ? "&" : "?") + "t=" + Date.now();
   }
 
@@ -1053,7 +1063,12 @@ class IlifeVacuumCard extends HTMLElement {
           if (q("badgetxt") && online) q("badgetxt").textContent = t.last_run;
         }
       }
-      if (!usedHero) { this._heroCells = null; hero.hidden = true; img.hidden = false; }
+      // The last fetch decides; before there is one, the camera's own state does.
+      const cam = hass.states[e.map];
+      const noMap = !usedHero && (this._imgOk === false
+        || (this._imgOk !== true && (!cam || cam.state === "unavailable")));
+      if (!usedHero) { this._heroCells = null; hero.hidden = true; img.hidden = noMap; }
+      if (q("nomap")) q("nomap").hidden = !noMap;
     }
     const totArea = sensorArea != null
       ? sensorArea

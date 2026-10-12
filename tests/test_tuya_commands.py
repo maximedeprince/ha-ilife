@@ -41,9 +41,14 @@ tuya_dynamic = _load("tuya_dynamic")
 
 command_for = tuya_dynamic.command_for
 enum_command = tuya_dynamic.enum_command
+merge_commands = tuya_dynamic.merge_commands
+mode_commands = tuya_dynamic.mode_commands
 parse_functions = tuya_dynamic.parse_functions
 range_values = tuya_dynamic.range_values
+return_commands = tuya_dynamic.return_commands
+run_flag = tuya_dynamic.run_flag
 unknown_functions = tuya_dynamic.unknown_functions
+unpause_flag = tuya_dynamic.unpause_flag
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
@@ -56,33 +61,21 @@ def load(name):
 FULL_CLEAN = ("smart", "auto", "clean", "smart_clean", "autoclean")
 
 
-def _list(*pairs):
-    out = {}
-    for pair in pairs:
-        if pair:
-            out.setdefault(pair[0], pair[1])
-    return [{"code": c, "value": v} for c, v in out.items()]
-
-
 def commands(functions):
     """Exactly what TuyaVacuum.__init__ derives, kept in step with vacuum.py."""
-    run = (command_for(functions, "power_go", "start", "smart", "clean", boolean=True)
-           or command_for(functions, "switch", "start", "smart", "clean", boolean=True))
+    run, unhold = run_flag(functions), unpause_flag(functions)
     halt = (command_for(functions, "power_go", "stop", "standby", "idle", boolean=False)
             or command_for(functions, "switch", "stop", "standby", "idle", boolean=False))
     hold = (command_for(functions, "pause", "pause", boolean=True)
             or enum_command(functions, "power_go", "pause"))
-    unhold = command_for(functions, "pause", "resume", "continue", boolean=False)
     full_clean = enum_command(functions, "mode", *FULL_CLEAN)
     return {
-        "start": _list(full_clean, run, unhold) if (full_clean or run) else [],
-        "resume": _list(unhold, run) if (run or unhold) else [],
-        "pause": _list(hold, halt) if hold else [],
-        "stop": _list(halt, unhold) if halt else [],
-        "return_to_base": _list(
-            command_for(functions, "switch_charge", "chargego", "charge", boolean=True)
-            or enum_command(functions, "mode", "chargego", "charge_go", "back_charge")),
-        "locate": _list(command_for(functions, "seek", "seek", boolean=True)),
+        "start": merge_commands(full_clean, run, unhold) if (full_clean or run) else [],
+        "resume": merge_commands(unhold, run) if (run or unhold) else [],
+        "pause": merge_commands(hold, halt) if hold else [],
+        "stop": merge_commands(halt, unhold) if halt else [],
+        "return_to_base": return_commands(functions),
+        "locate": merge_commands(command_for(functions, "seek", "seek", boolean=True)),
     }
 
 
@@ -210,6 +203,53 @@ def test_mode_only_model_can_still_start():
     """No run flag at all: writing the mode is the whole command."""
     functions = {"mode": {"type": "Enum", "values": {"range": ["smart", "chargego"]}}}
     assert commands(functions)["start"] == [{"code": "mode", "value": "smart"}]
+
+
+# --- the Cleaning mode select (#23) -------------------------------------------- #
+
+def test_a_cleaning_mode_is_sent_the_way_start_is():
+    """The A30 Pro ignored `mode` written alone, as it ignores the run flag alone:
+    the mode buttons "did not respond" (#23) while Start, which sends mode, run
+    flag and pause flag together, worked."""
+    for model in REPORTED:
+        functions, _ = load(model)
+        for option in ("zone", "pose", "part"):
+            assert mode_commands(functions, option) == [
+                {"code": "mode", "value": option},
+                {"code": "power_go", "value": True},
+                {"code": "pause", "value": False},
+            ], (model, option)
+        assert mode_commands(functions, "smart") == commands(functions)["start"], model
+
+
+def test_the_dock_mode_is_sent_the_way_return_to_base_is():
+    for model in REPORTED:
+        functions, _ = load(model)
+        assert mode_commands(functions, "chargego") == commands(functions)["return_to_base"]
+        assert mode_commands(functions, "chargego") == [
+            {"code": "switch_charge", "value": True}], model
+
+
+def test_every_mode_command_is_writable_on_the_device():
+    for model in REPORTED:
+        functions, _ = load(model)
+        for option in range_values(functions, "mode"):
+            sent = mode_commands(functions, option)
+            assert sent, (model, option)
+            for cmd in sent:
+                legal = range_values(functions, cmd["code"])
+                assert cmd["code"] in functions, (model, option, cmd)
+                assert not legal or cmd["value"] in legal, (model, option, cmd)
+
+
+def test_mode_only_model_gets_the_bare_mode():
+    functions = {"mode": {"type": "Enum",
+                          "values": {"range": ["smart", "zone", "goto_charge"]}}}
+    assert mode_commands(functions, "zone") == [{"code": "mode", "value": "zone"}]
+    # the V20 spelling of the dock value, with no dedicated return DP
+    assert mode_commands(functions, "goto_charge") == [
+        {"code": "mode", "value": "goto_charge"}]
+    assert mode_commands(functions, "edge") == []
 
 
 def test_match_is_case_insensitive_and_keeps_the_devices_own_spelling():

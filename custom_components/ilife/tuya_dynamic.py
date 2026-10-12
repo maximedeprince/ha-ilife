@@ -5,7 +5,14 @@ from __future__ import annotations
 
 import json
 
-from .const import TUYA_KNOWN_DP_CODES
+from .const import (
+    TUYA_DP_MODE,
+    TUYA_DP_PAUSE,
+    TUYA_DP_POWER_GO,
+    TUYA_DP_RETURN_HOME,
+    TUYA_DP_SWITCH,
+    TUYA_KNOWN_DP_CODES,
+)
 
 
 def parse_functions(spec: dict) -> dict[str, dict]:
@@ -103,3 +110,71 @@ def command_for(functions: dict, code: str, *candidates, boolean: bool = True):
     if range_values(functions, code):
         return enum_command(functions, code, *candidates)
     return (code, boolean)
+
+
+# --------------------------------------------------------------------------- #
+#  Turning an action into the instruction a device obeys
+# --------------------------------------------------------------------------- #
+# Mode values that send the robot to its dock rather than cleaning (the V20 says
+# "goto_charge" where the A30 Pro and the T20s say "chargego").
+RETURN_MODES = ("chargego", "charge_go", "back_charge", "goto_charge")
+
+
+def merge_commands(*pairs) -> list[dict]:
+    """The (code, value) pairs that this device supports, as one Tuya command list.
+
+    Tuya applies a command list in order, in a single call, which is what lets one
+    action write several data points as a single instruction to the robot. Pairs that
+    came back None (a data point this model does not have) are simply dropped, so an
+    action degrades to whatever the device can actually do rather than failing.
+
+    Pass the pair that carries the action's meaning first: where two of them resolve to
+    the same data point, the first wins. On a model whose `power_go` is an Enum, "pause"
+    and "stop" are both values of it, and sending both would tell the robot two
+    different things in one breath.
+    """
+    out = {}
+    for pair in pairs:
+        if pair is not None:
+            code, value = pair
+            out.setdefault(code, value)
+    return [{"code": code, "value": value} for code, value in out.items()]
+
+
+def run_flag(functions: dict):
+    """(code, value) that sets the robot going, whichever shape its run DP has."""
+    return (command_for(functions, TUYA_DP_POWER_GO, "start", "smart", "clean",
+                        boolean=True)
+            or command_for(functions, TUYA_DP_SWITCH, "start", "smart", "clean",
+                           boolean=True))
+
+
+def unpause_flag(functions: dict):
+    """(code, value) that clears the pause flag, or None on a model without one."""
+    return command_for(functions, TUYA_DP_PAUSE, "resume", "continue", boolean=False)
+
+
+def return_commands(functions: dict) -> list[dict]:
+    """Send the robot to its dock: the dedicated DP if it has one, else the mode."""
+    return merge_commands(
+        command_for(functions, TUYA_DP_RETURN_HOME, "chargego", "charge", boolean=True)
+        or enum_command(functions, TUYA_DP_MODE, *RETURN_MODES))
+
+
+def mode_commands(functions: dict, option) -> list[dict]:
+    """What choosing `option` in the Cleaning mode select sends (#23).
+
+    Writing `mode` is the command on these robots — there is no separate "go" for a
+    zone or a spot clean. But an A30 Pro did not react to a mode written on its own
+    (#23), as it does not react to the run flag on its own (#3, #23, #24), while the
+    instruction Start sends — mode, run flag and pause flag together — works on it.
+    So a cleaning mode goes out exactly like Start, with the chosen mode in place of
+    the full clean, and the dock value goes out like Return to base. A model without
+    a run flag still gets the bare mode, which is all it has.
+    """
+    mode = enum_command(functions, TUYA_DP_MODE, str(option).lower())
+    if mode is None:
+        return []
+    if str(mode[1]).lower() in RETURN_MODES:
+        return return_commands(functions) or merge_commands(mode)
+    return merge_commands(mode, run_flag(functions), unpause_flag(functions))

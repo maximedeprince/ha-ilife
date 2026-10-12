@@ -42,6 +42,16 @@ BRANDS: dict[str, Brand] = {
         oa_app_id="com.robot.ava", app_version="1.0.20",
         default_region="us",
     ),
+    # ZACO Home (com.zaco.home.robot), whose robots include the ZACO A10, a rebrand
+    # of the ILIFE A10 (#14). appKey, app version and region from a request @FF0205
+    # captured; the secret is the one eXaminator/ha-zaco-vacuum (MIT) ships, and it
+    # signs a request Aliyun's API gateway accepts for this appKey.
+    "zaco": Brand(
+        key="zaco", name="ZACO",
+        appkey="28416395", appsecret=b"a2a5fdb0aa8555d31d80016454f2b248",
+        oa_app_id="com.zaco.home.robot", app_version="1.7.7",
+        default_region="eu",
+    ),
 }
 
 DEFAULT_BRAND = "ilife"

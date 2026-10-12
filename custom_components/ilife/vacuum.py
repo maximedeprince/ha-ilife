@@ -25,7 +25,6 @@ from .const import (
     TUYA_DP_MODE,
     TUYA_DP_PAUSE,
     TUYA_DP_POWER_GO,
-    TUYA_DP_RETURN_HOME,
     TUYA_DP_STATUS,
     TUYA_DP_SUCTION,
     TUYA_DP_SWITCH,
@@ -43,7 +42,14 @@ from .const import (
 )
 from .entity import ILifeEntity
 from .tuya_api import TuyaError, TuyaOfflineError
-from .tuya_dynamic import command_for, enum_command
+from .tuya_dynamic import (
+    command_for,
+    enum_command,
+    merge_commands,
+    return_commands,
+    run_flag,
+    unpause_flag,
+)
 from .tuya_entity import TuyaEntity
 from .tuya_rooms import CLEAN_ROOMS_CODE, MAX_PASSES, clean_rooms_value
 from .tuya_schedule import (
@@ -173,27 +179,6 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         self._unsupported("delete schedule")
 
 
-def _commands(*pairs):
-    """The (code, value) pairs that this device supports, as one Tuya command list.
-
-    Tuya applies a command list in order, in a single call, which is what lets one
-    action write several data points as a single instruction to the robot. Pairs that
-    came back None (a data point this model does not have) are simply dropped, so an
-    action degrades to whatever the device can actually do rather than failing.
-
-    Pass the pair that carries the action's meaning first: where two of them resolve to
-    the same data point, the first wins. On a model whose `power_go` is an Enum, "pause"
-    and "stop" are both values of it, and sending both would tell the robot two
-    different things in one breath.
-    """
-    out = {}
-    for pair in pairs:
-        if pair is not None:
-            code, value = pair
-            out.setdefault(code, value)
-    return [{"code": code, "value": value} for code, value in out.items()]
-
-
 class TuyaVacuum(TuyaEntity, StateVacuumEntity):
     """ILIFE Clean (Tuya) vacuum. Features/commands are derived from the device's own
     live /specifications response — nothing here assumes a DP the device didn't advertise."""
@@ -215,10 +200,7 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         # #3, #23, #24), while tuya-local drives the same robots locally by always
         # writing both flags in the same frame, and works. Home Assistant's own Tuya
         # integration sends `power_go` alone, so it has the same blind spot.
-        run = command_for(functions, TUYA_DP_POWER_GO, "start", "smart", "clean",
-                          boolean=True) \
-            or command_for(functions, TUYA_DP_SWITCH, "start", "smart", "clean",
-                           boolean=True)
+        run = run_flag(functions)
         halt = command_for(functions, TUYA_DP_POWER_GO, "stop", "standby", "idle",
                            boolean=False) \
             or command_for(functions, TUYA_DP_SWITCH, "stop", "standby", "idle",
@@ -226,8 +208,7 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         # Never derive pause from a Boolean power_go: false there means stop, not pause.
         hold = command_for(functions, TUYA_DP_PAUSE, "pause", boolean=True) \
             or enum_command(functions, TUYA_DP_POWER_GO, "pause")
-        unhold = command_for(functions, TUYA_DP_PAUSE, "resume", "continue",
-                             boolean=False)
+        unhold = unpause_flag(functions)
         full_clean = enum_command(functions, TUYA_DP_MODE, *TUYA_MODE_FULL_CLEAN)
 
         # Each list is mode first, then the run flag, then the pause flag.
@@ -240,16 +221,13 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
         # Each action only exists if something can really perform it. In particular
         # PAUSE requires a genuine pause data point: a Boolean `power_go` set to false
         # means stop, and offering that as pause would quietly lose the user's place.
-        self._cmd_start = _commands(full_clean, run, unhold) if (full_clean or run) else []
-        self._cmd_resume = _commands(unhold, run) if (run or unhold) else []
-        self._cmd_pause = _commands(hold, halt) if hold else []
-        self._cmd_stop = _commands(halt, unhold) if halt else []
-        self._cmd_return = _commands(
-            command_for(functions, TUYA_DP_RETURN_HOME, "chargego", "charge",
-                        boolean=True)
-            or enum_command(functions, TUYA_DP_MODE, "chargego", "charge_go",
-                            "back_charge"))
-        self._cmd_locate = _commands(
+        self._cmd_start = (merge_commands(full_clean, run, unhold)
+                           if (full_clean or run) else [])
+        self._cmd_resume = merge_commands(unhold, run) if (run or unhold) else []
+        self._cmd_pause = merge_commands(hold, halt) if hold else []
+        self._cmd_stop = merge_commands(halt, unhold) if halt else []
+        self._cmd_return = return_commands(functions)
+        self._cmd_locate = merge_commands(
             command_for(functions, TUYA_DP_LOCATE, "seek", boolean=True))
         # Suction is the fan speed every ILIFE Clean model advertises; exposing it as
         # the vacuum's own fan_speed is what the Lovelace card (and HA's stock vacuum
