@@ -169,29 +169,44 @@ async def _async_device_diag(
     if not hasattr(api, "realtime_map_files"):
         return diag
 
+    realtime_error = None
+
     def _fetch() -> list[dict]:
-        files = api.realtime_map_files()
+        # A refused realtime endpoint must not hide the stored map, which is the one
+        # every model seen so far actually serves (#30).
+        nonlocal realtime_error
+        try:
+            files = api.realtime_map_files()
+        except TuyaError as err:
+            realtime_error, files = str(err), []
         if not files:
             record = api.latest_stored_map()
             if record is not None:
                 files = api.stored_map_files(record)
         return files
 
+    def _scrub(text: str | None) -> str | None:
+        # Errors quote the API path, and the path carries the device id.
+        device_id = getattr(api, "device_id", None)
+        return text.replace(device_id, "**REDACTED**") if text and device_id else text
+
     try:
         files = await hass.async_add_executor_job(_fetch)
     except TuyaError as err:
-        diag["realtime_map_probe"] = {"success": False, "error": str(err)}
+        diag["realtime_map_probe"] = {"success": False, "error": _scrub(str(err)),
+                                      "realtime_error": _scrub(realtime_error)}
         return diag
     except Exception as err:  # noqa: BLE001
         diag["realtime_map_probe"] = {
             "success": False,
-            "error": f"unexpected map probe error: {err}",
+            "error": _scrub(f"unexpected map probe error: {err}"),
         }
         return diag
 
     described = [_describe_map_file(item) for item in files]
     diag["realtime_map_probe"] = {
         "success": True,
+        "realtime_error": _scrub(realtime_error),
         "note": (
             "The map body is deliberately not included: it is the home's floor plan "
             "and this file is meant to be shareable. What is here says whether the "

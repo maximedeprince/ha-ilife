@@ -21,6 +21,7 @@ from .const import (
 )
 from .entity import device_info
 from .map import render_png
+from .tuya_api import TuyaError
 from .tuya_entity import tuya_device_info
 from .tuya_dynamic import enum_command
 from .tuya_map import render_tuya_map_png
@@ -30,13 +31,15 @@ TUYA_MAP_ACTIVE_CACHE_SECONDS = 30
 TUYA_MAP_IDLE_CACHE_SECONDS = 300
 TUYA_MAP_POST_CLEAN_SECONDS = 600
 TUYA_MAP_REQUEST_SECONDS = 60
-# Not every ILIFE Clean model publishes a map: the T20s of #24 advertises
-# `request`/`path_data` and never produces one, and a Cloud Project without the
-# Robot Vacuum service never will either. (The A30 Pro of #23 does publish one, but
-# only as a stored map once a run has finished.) Those are permanent
-# conditions, so failures back off instead of retrying on every coordinator tick —
-# otherwise the owners of those models get a cloud call and a traceback every 30s
-# for a map that is never coming.
+# A refused realtime endpoint is asked again this much later, not on every refresh.
+TUYA_REALTIME_RETRY_SECONDS = 3600
+ISSUES_URL = "https://github.com/maximedeprince/ha-ilife/issues"
+# Not every setup gets a map: a Cloud Project without the Sweeping Robot service
+# never will, and a model may simply have none. (The V20, the A30 Pro and the T20s
+# all store one once a run has finished — the T20s was long assumed not to.) Those
+# are permanent conditions, so failures back off instead of retrying on every
+# coordinator tick — otherwise their owners get a cloud call and a traceback every
+# 30s for a map that is never coming.
 TUYA_MAP_RETRY_BACKOFF = (30, 60, 300, 900, 3600)
 
 
@@ -118,6 +121,7 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
         # model without a realtime layout still has a floor plan to draw on.
         self._stored = None
         self._failures = 0
+        self._realtime_retry_at = 0.0
         self._refresh_lock = asyncio.Lock()
         self._refresh_task = None
         self._request_time = 0.0
@@ -206,12 +210,13 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
     def extra_state_attributes(self):
         return self._cache_metadata
 
-    def _note_failure(self, reason: str) -> None:
+    def _note_failure(self, reason: str, *, undecodable: bool = False) -> None:
         """Record a failed refresh, loudly the first time and quietly after that.
 
         The first failure is worth a warning: it is usually the Cloud Project
-        missing the Robot Vacuum service, which is fixable and invisible otherwise.
-        Repeats are not — on a model that has no map they would never stop.
+        missing the map service, which is fixable and invisible otherwise — or a map
+        that arrived and could not be read, which is a bug worth reporting. Repeats
+        are not — on a model that has no map they would never stop.
         """
         self._failures += 1
         self._cache_metadata = {
@@ -219,11 +224,22 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
             "map_last_error": reason,
             "map_fetched_at": int(time.time()),
         }
-        if self._failures == 1:
+        if self._failures == 1 and undecodable:
+            # The download worked, so the service is authorized: pointing at the
+            # Tuya console here would send the user the wrong way (#30).
+            _LOGGER.warning(
+                "ILIFE Clean map for %s was downloaded but could not be decoded: %s. "
+                "Please report it at %s with the diagnostics file (it describes the "
+                "map file, never the floor plan); retrying with backoff",
+                self.api.device_id,
+                reason,
+                ISSUES_URL,
+            )
+        elif self._failures == 1:
             _LOGGER.warning(
                 "ILIFE Clean map unavailable for %s: %s. If this model does publish a "
-                "map, check that the Tuya Cloud Project has the Robot Vacuum Open APIs "
-                "service authorized; retrying with backoff",
+                "map, check that the Tuya Cloud Project has the Sweeping Robot Open "
+                "Service authorized; retrying with backoff",
                 self.api.device_id,
                 reason,
             )
@@ -245,8 +261,10 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
                     return
             try:
                 await self._async_update_map()
-            except Exception as err:  # noqa: BLE001
+            except TuyaError as err:
                 self._note_failure(f"{type(err).__name__}: {err}")
+            except Exception as err:  # noqa: BLE001 — a map file we cannot read
+                self._note_failure(f"{type(err).__name__}: {err}", undecodable=True)
             self._cache_time = time.monotonic()
             self.async_write_ha_state()
 
@@ -265,7 +283,7 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
         """
         cleaning = self._is_cleaning()
         await self._async_request_current_map()
-        live = await self.hass.async_add_executor_job(self.api.realtime_map_files)
+        live = await self._async_realtime_files()
         layout, path = _map_payload(live, 0), _map_payload(live, 1)
         record = None
         if layout:
@@ -326,6 +344,24 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
         if self._failures:
             _LOGGER.info("ILIFE Clean map recovered for %s", self.api.device_id)
         self._failures = 0
+
+    async def _async_realtime_files(self) -> list[dict]:
+        """The realtime map files, or [] when the endpoint refuses us.
+
+        No ILIFE model has filled it so far, so a refusal there must not stand
+        between the user and the stored map (#30: one Cloud Project got 28841101
+        from realtime-map alone). If the map service is missing altogether, the
+        stored-map calls fail too, and that failure is the one reported.
+        """
+        if time.monotonic() < self._realtime_retry_at:
+            return []
+        try:
+            return await self.hass.async_add_executor_job(self.api.realtime_map_files)
+        except TuyaError as err:
+            self._realtime_retry_at = time.monotonic() + TUYA_REALTIME_RETRY_SECONDS
+            _LOGGER.debug("ILIFE Clean realtime map refused for %s, using the stored "
+                          "map: %s", self.api.device_id, err)
+            return []
 
     async def _async_refresh_stored(self) -> None:
         """Keep the newest stored map in memory, downloading it only when it changes."""

@@ -121,6 +121,21 @@ _CODE_HINTS: dict[int, str] = {
               "Basic Service) — subscribe to it on iot.tuya.com, it is free",
 }
 
+# The map endpoints belong to a service of their own, so a permission error there is
+# about that service, not the ones the setup hints above name (#30). Tuya's console
+# lists it as "Sweeping Robot Open Service" on the accounts that have reported it so
+# far (#23, #30), and as "Robot Vacuum Open APIs" in places.
+_SWEEPER_SERVICE = (
+    "authorize the Sweeping Robot Open Service (also listed as Robot Vacuum Open "
+    "APIs) for this Tuya Cloud Project, under Service API → Go to Authorize. It "
+    "is free, and not enabled by default"
+)
+_SWEEPER_HINTS: dict[int, str] = {
+    1106: "permission denied on the map API — " + _SWEEPER_SERVICE,
+    28841101: "the map API is not subscribed — " + _SWEEPER_SERVICE,
+    28841105: "the map API is not subscribed — " + _SWEEPER_SERVICE,
+}
+
 
 def _format_skew(seconds: float) -> str:
     """Human-readable clock offset — minutes matter more than seconds at this scale."""
@@ -155,10 +170,11 @@ def _clock_skew_note(server_t) -> str:
 
 
 def _api_error(code, msg: str, path: str, *, server_t=None,
-               force_auth: bool = False) -> TuyaError:
-    """Build the richest error we can for a failed Tuya call, and log it."""
+               force_auth: bool = False, hints: dict | None = None) -> TuyaError:
+    """Build the richest error we can for a failed Tuya call, and log it. `hints`
+    replace the generic ones for calls where a code means something narrower."""
     text = f"Tuya API error {code} on {path}: {msg}"
-    hint = _CODE_HINTS.get(code)
+    hint = (hints or {}).get(code) or _CODE_HINTS.get(code)
     if hint:
         text += f" — {hint}"
     note = _clock_skew_note(server_t)
@@ -238,7 +254,7 @@ class TuyaClient:
         self._token_expiry = 0.0
 
     # --- transport ---
-    def _call(self, method, path, body=None, _retry=True):
+    def _call(self, method, path, body=None, _retry=True, hints=None):
         body_bytes = json.dumps(body).encode() if body is not None else b""
         headers = _headers(method, path, body_bytes, self.access_id, self.access_secret,
                            self._token or "")
@@ -249,8 +265,8 @@ class TuyaClient:
             if code == 1010 and _retry:  # token invalid/expired (verified Tuya SDK constant)
                 self._token = None
                 self.authenticate()
-                return self._call(method, path, body, _retry=False)
-            raise _api_error(code, msg, path, server_t=r.get("t"))
+                return self._call(method, path, body, _retry=False, hints=hints)
+            raise _api_error(code, msg, path, server_t=r.get("t"), hints=hints)
         return r.get("result")
 
     # --- auth ---
@@ -374,16 +390,13 @@ class TuyaClient:
         return f"/v1.0/users/sweepers/file/{urllib.parse.quote(device_id, safe='')}/{action}"
 
     def _sweeper_call(self, path: str):
-        """GET a Robot Vacuum Open API endpoint, naming the missing service on 1106."""
+        """GET a map endpoint. A permission error there names the map service, and is
+        not an authentication failure: everything else works without that service."""
         try:
-            return self._call("GET", path)
-        except TuyaError as err:
-            if err.code == 1106:
-                raise TuyaError(
-                    f"{err}. For map access, also authorize the Robot Vacuum Open APIs "
-                    "service for this Tuya Cloud Project",
-                    err.code,
-                ) from err
+            return self._call("GET", path, hints=_SWEEPER_HINTS)
+        except TuyaAuthError as err:
+            if err.code in _SWEEPER_HINTS:
+                raise TuyaError(str(err), err.code) from err
             raise
 
     def realtime_map_files(self, device_id: str) -> list[dict]:
