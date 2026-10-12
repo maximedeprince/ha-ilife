@@ -154,7 +154,7 @@ class TuyaModeSelect(_TuyaSelectBase):
 
     async def async_select_option(self, option):
         # A command, not a setting: sent with the run and pause flags, the way
-        # Start is, because the A30 Pro ignores a mode written alone (#23).
+        # Start is — an A30 Pro did not react to the mode written alone (#23).
         commands = mode_commands(self.coordinator.spec_functions, option)
         if commands:
             await self._send_many(commands)

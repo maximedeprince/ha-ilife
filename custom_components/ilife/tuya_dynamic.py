@@ -165,12 +165,12 @@ def mode_commands(functions: dict, option) -> list[dict]:
     """What choosing `option` in the Cleaning mode select sends (#23).
 
     Writing `mode` is the command on these robots — there is no separate "go" for a
-    zone or a spot clean. But the A30 Pro ignores a mode written on its own, as it
-    ignores the run flag on its own (#3, #23, #24), and obeys the instruction Start
-    sends: mode, run flag and pause flag together. So a cleaning mode goes out
-    exactly like Start, with the chosen mode in place of the full clean, and the
-    dock value goes out like Return to base. A model without a run flag still gets
-    the bare mode, which is all it has.
+    zone or a spot clean. But an A30 Pro did not react to a mode written on its own
+    (#23), as it does not react to the run flag on its own (#3, #23, #24), while the
+    instruction Start sends — mode, run flag and pause flag together — works on it.
+    So a cleaning mode goes out exactly like Start, with the chosen mode in place of
+    the full clean, and the dock value goes out like Return to base. A model without
+    a run flag still gets the bare mode, which is all it has.
     """
     mode = enum_command(functions, TUYA_DP_MODE, str(option).lower())
     if mode is None:
