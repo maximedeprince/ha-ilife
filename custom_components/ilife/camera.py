@@ -76,9 +76,16 @@ class ILifeMapCamera(CoordinatorEntity, Camera):
 
     @property
     def available(self) -> bool:
-        # A model that publishes no map should read as unavailable rather than as a
-        # camera serving nothing; `map_last_error` says which of the two it is.
-        return self.coordinator.last_update_success and self._cache_png is not None
+        # Available when there is a map to draw. This camera renders on request, so
+        # waiting for a rendered image (0.7.0) kept it unavailable unless a dashboard
+        # happened to ask for one — through every clean, on a V3X.
+        if not self.coordinator.last_update_success:
+            return False
+        if self._cache_png is not None:
+            return True
+        data = self.coordinator.data or {}
+        return bool(((data.get("RealTimeMap") or {}).get("MapData"))
+                    or ((data.get("RealMapData_1") or {}).get("MapData1")))
 
     def _key(self, data):
         rtm = (data or {}).get("RealTimeMap") or {}
