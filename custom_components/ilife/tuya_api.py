@@ -122,13 +122,11 @@ _CODE_HINTS: dict[int, str] = {
 }
 
 # The map endpoints belong to a service of their own, so a permission error there is
-# about that service, not the ones the setup hints above name (#30). Tuya's console
-# lists it as "Sweeping Robot Open Service" on the accounts that have reported it so
-# far (#23, #30), and as "Robot Vacuum Open APIs" in places.
+# about that service, not the ones the setup hints above name (#30). The name is the
+# one Tuya's console lists (#23, #30), not "Robot Vacuum Open APIs" as we used to say.
 _SWEEPER_SERVICE = (
-    "authorize the Sweeping Robot Open Service (also listed as Robot Vacuum Open "
-    "APIs) for this Tuya Cloud Project, under Service API → Go to Authorize. It "
-    "is free, and not enabled by default"
+    "authorize the Sweeping Robot Open Service for this Tuya Cloud Project, under "
+    "Service API → Go to Authorize. It is free, and not enabled by default"
 )
 _SWEEPER_HINTS: dict[int, str] = {
     1106: "permission denied on the map API — " + _SWEEPER_SERVICE,
