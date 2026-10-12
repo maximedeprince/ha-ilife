@@ -380,11 +380,14 @@ class TuyaClient:
         """Write product DPs by code — the way to reach non-standard DPs."""
         self.authenticate()
         _LOGGER.debug("Tuya properties -> %s: %s", device_id, properties)
-        self._call(
+        result = self._call(
             "POST",
             f"/v2.0/cloud/thing/{urllib.parse.quote(device_id)}/shadow/properties/issue",
             {"properties": json.dumps(properties)},
         )
+        # Accepted is not obeyed (#23: room cleaning did nothing): what Tuya answered
+        # is the first half of telling the two apart, the device log the second.
+        _LOGGER.debug("Tuya properties <- %s: %s", device_id, result)
 
     def _sweeper_endpoint(self, device_id: str, action: str) -> str:
         return f"/v1.0/users/sweepers/file/{urllib.parse.quote(device_id, safe='')}/{action}"

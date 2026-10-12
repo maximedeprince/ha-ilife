@@ -88,7 +88,9 @@ Two things worth knowing about how these robots take orders:
   on its own. Pressing start on a *paused* vacuum resumes it instead of restarting.
 - **The Cleaning mode select is a command, not a setting.** Choosing *zone*, *spot* or
   *edge* tells the robot to go and do that now — it is how you ask for anything other
-  than a full clean.
+  than a full clean. It is sent the way Start is, with the run and pause flags, since
+  some models (A30 Pro) ignore a mode written on its own; choosing the dock value
+  sends the robot home, like Return to base.
 
 ## Installation (HACS)
 

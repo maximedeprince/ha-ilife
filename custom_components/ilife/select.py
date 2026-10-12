@@ -24,7 +24,7 @@ from .const import (
 )
 from .entity import ILifeEntity
 from .tuya_api import TuyaError, TuyaOfflineError
-from .tuya_dynamic import range_values, unknown_functions
+from .tuya_dynamic import mode_commands, range_values, unknown_functions
 from .tuya_entity import TuyaEntity
 from .tuya_rooms import CLEAN_SETTINGS_CODE, PROGRAMS, active_program, with_program
 
@@ -123,6 +123,18 @@ class _TuyaSelectBase(TuyaEntity, SelectEntity):
         except TuyaError as err:
             raise HomeAssistantError(str(err)) from err
 
+    async def _send_many(self, commands):
+        """Several DPs as one instruction, the way the vacuum's actions are sent."""
+        try:
+            await self.hass.async_add_executor_job(self.api.send_many, commands)
+        except TuyaOfflineError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="device_offline"
+            ) from err
+        except TuyaError as err:
+            raise HomeAssistantError(str(err)) from err
+        await self.coordinator.async_request_refresh()
+
 
 class TuyaModeSelect(_TuyaSelectBase):
     _attr_translation_key = "cleaning_mode"
@@ -141,7 +153,13 @@ class TuyaModeSelect(_TuyaSelectBase):
         return str(v) if v is not None else None
 
     async def async_select_option(self, option):
-        await self._send(TUYA_DP_MODE, option)
+        # A command, not a setting: sent with the run and pause flags, the way
+        # Start is, because the A30 Pro ignores a mode written alone (#23).
+        commands = mode_commands(self.coordinator.spec_functions, option)
+        if commands:
+            await self._send_many(commands)
+        else:
+            await self._send(TUYA_DP_MODE, option)
 
 
 class TuyaWaterSelect(_TuyaSelectBase):
