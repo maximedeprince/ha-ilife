@@ -12,10 +12,15 @@ CONF_ACCESS_SECRET = "access_secret"
 CONF_UID = "uid"
 
 # WorkMode groups used to derive the vacuum activity
-CLEANING_MODES = {3, 4, 5, 6, 13, 10}
-DOCKED_MODES = {9, 11, 16}
-RETURNING_MODES = {8}
+# (values as in the app's DeviceUtils.getStatusStr: 19 zone clean, 20 room clean,
+# 22/23 exploring, 24 back to the start point, 25 planning, 17 asleep on the dock)
+CLEANING_MODES = {3, 4, 5, 6, 10, 13, 19, 20, 22, 23, 25}
+DOCKED_MODES = {9, 11, 16, 17}
+RETURNING_MODES = {8, 24}
 PAUSED_MODES = {12}
+# Modes in which the app first sends WorkMode 2 (standby) before a room / zone / go-to
+# command (DeviceUtils.isWork).
+BUSY_MODES = {3, 4, 5, 6, 7, 8, 10, 12, 13, 15, 18, 19, 20, 22, 23}
 
 # CleanDirection (remote-control mode)
 DIRECTIONS = {"forward": 1, "backward": 2, "left": 3, "right": 4, "pause": 5}
