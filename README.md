@@ -323,6 +323,12 @@ target: { entity_id: vacuum.ava_pro_max }
 data: { x: 27, y: 113 }
 ```
 
+On Home Assistant releases with area cleaning (`vacuum.clean_area`), each room is
+also offered as a segment (grouped by map name): link the rooms to your Home Assistant
+areas once in the vacuum's settings, then clean an area from the vacuum dialog, a
+voice assistant or `vacuum.clean_area`. Mapping the home again in the app raises a
+repair to re-link the rooms.
+
 `vacuum.send_command` takes the same commands, also under the names map cards send
 (`app_segment_clean`, `app_zoned_clean`, `app_goto_target`). The map camera publishes
 `calibration_points` and `rooms` (with pixel positions), so

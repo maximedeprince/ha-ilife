@@ -10,6 +10,7 @@ from homeassistant.components.vacuum import (
     VacuumActivity,
     VacuumEntityFeature,
 )
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, entity_platform
 
@@ -46,6 +47,14 @@ from .const import (
 from .entity import ILifeEntity
 from .protocols import MapProtocol, detect
 from .tuya_api import TuyaError, TuyaOfflineError
+
+# Home Assistant's own room cleaning (vacuum.clean_area: the robot's segments mapped to
+# HA areas, offered in the vacuum dialog) — only on releases that have it.
+CLEAN_AREA = getattr(VacuumEntityFeature, "CLEAN_AREA", None)
+try:
+    from homeassistant.components.vacuum import Segment
+except ImportError:  # older Home Assistant
+    Segment = None
 from .tuya_dynamic import (
     command_for,
     enum_command,
@@ -138,9 +147,13 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
     @property
     def supported_features(self):
         # send_command only carries the map commands (room / zone / go-to)
-        if _protocol(self.coordinator).commands:
-            return self._base_features | VacuumEntityFeature.SEND_COMMAND
-        return self._base_features
+        proto = _protocol(self.coordinator)
+        features = self._base_features
+        if proto.commands:
+            features |= VacuumEntityFeature.SEND_COMMAND
+        if proto.rooms and CLEAN_AREA is not None and Segment is not None:
+            features |= CLEAN_AREA
+        return features
 
     @property
     def activity(self):
@@ -227,6 +240,53 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         mask = self._map_protocol("rooms", "clean rooms").room_mask(rooms)
         await self._prepare()
         await self._cmd(self.api.clean_rooms, mask, passes)
+
+    # Home Assistant areas (vacuum.clean_area): one segment per room of the selected
+    # saved map, id "<map id>_<room bit>" so a room of another map is never mixed up.
+    def _segment_ids(self):
+        proto = self.coordinator.protocol
+        if proto is None or not proto.rooms or not proto.room_list:
+            return None
+        return {f"{proto.map_id}_{r['id']}" for r in proto.room_list}
+
+    async def async_get_segments(self):
+        proto = self.coordinator.protocol
+        if proto is None or not proto.rooms:
+            return []
+        segs = []
+        for r in proto.room_list:
+            seg_id = f"{proto.map_id}_{r['id']}"
+            try:
+                segs.append(Segment(id=seg_id, name=r["name"], group=proto.map_name))
+            except TypeError:  # Segment without `group` (first releases with CLEAN_AREA)
+                segs.append(Segment(id=seg_id, name=r["name"]))
+        return segs
+
+    async def async_clean_segments(self, segment_ids, **kwargs):
+        proto = self._map_protocol("rooms", "clean rooms")
+        rooms = []
+        for seg in segment_ids:
+            map_id, _, bit = str(seg).partition("_")
+            # segments of another saved map are ignored, as the robot cleans this one
+            if map_id == str(proto.map_id) and bit.isdigit():
+                rooms.append(int(bit))
+        if not rooms:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="no_saved_map")
+        await self.async_clean_rooms(rooms)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Flag (repair issue) rooms that changed since they were mapped to HA areas."""
+        super()._handle_coordinator_update()
+        if CLEAN_AREA is None or CLEAN_AREA not in self.supported_features:
+            return
+        current = self._segment_ids()
+        if current is None or self.registry_entry is None:
+            return  # no rooms decoded yet: no false alarm
+        last_seen = self.last_seen_segments
+        if last_seen is not None and current != {seg.id for seg in last_seen}:
+            self.async_create_segments_issue()
 
     async def async_clean_zone(self, zone, passes=1):
         self._map_protocol("zones", "clean zone")
