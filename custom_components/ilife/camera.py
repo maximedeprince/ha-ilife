@@ -20,7 +20,6 @@ from .const import (
     TUYA_STATUS_CLEANING,
 )
 from .entity import device_info
-from .map import render_png
 from .tuya_api import TuyaError
 from .tuya_entity import tuya_device_info
 from .tuya_dynamic import enum_command
@@ -83,25 +82,28 @@ class ILifeMapCamera(CoordinatorEntity, Camera):
             return False
         if self._cache_png is not None:
             return True
-        data = self.coordinator.data or {}
-        return bool(((data.get("RealTimeMap") or {}).get("MapData"))
-                    or ((data.get("RealMapData_1") or {}).get("MapData1")))
-
-    def _key(self, data):
-        rtm = (data or {}).get("RealTimeMap") or {}
-        rmd = (data or {}).get("RealMapData_1") or {}
-        return (rtm.get("MapData"), rtm.get("CurrentPiont"), (data or {}).get("ChargerPiont"),
-                rmd.get("UpdateTime"), rmd.get("MapData1"))
+        proto = self.coordinator.protocol
+        return bool(proto and proto.has_map(self.coordinator.data or {}))
 
     async def async_camera_image(self, width=None, height=None):
+        # what is drawn is the model's map protocol's business (protocols.py)
+        proto = self.coordinator.protocol
+        if proto is None:
+            return self._cache_png
         data = self.coordinator.data or {}
-        key = self._key(data)
+        key = (proto.key, proto.render_key(data))
         if key != self._cache_key or self._cache_png is None:
-            png = await self.hass.async_add_executor_job(render_png, data)
+            png = await self.hass.async_add_executor_job(proto.render, data)
             if png is not None:
                 self._cache_key = key
                 self._cache_png = png
         return self._cache_png
+
+    @property
+    def extra_state_attributes(self):
+        # SLAM models: calibration_points + rooms, for map cards (xiaomi-vacuum-map-card)
+        proto = self.coordinator.protocol
+        return proto.camera_attributes() if proto else None
 
 
 class TuyaMapCamera(CoordinatorEntity, Camera):

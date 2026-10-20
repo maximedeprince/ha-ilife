@@ -1053,7 +1053,10 @@ class IlifeVacuumCard extends HTMLElement {
     const img = q("map"), hero = q("heromap");
     if (img && hero) {
       let usedHero = false;
-      if (vs.state !== "cleaning") {
+      // A camera drawing a saved map (ILIFEHOME SLAM models: calibration_points) beats
+      // the last clean's thumbnail-grade map.
+      const savedMap = !!(e.map && hass.states[e.map]?.attributes.calibration_points);
+      if (vs.state !== "cleaning" && !savedMap) {
         const last = cleans.find((c) => c.map);
         const dec = last && decodeCleanMap(last.map);
         if (dec && dec.cells.length) {

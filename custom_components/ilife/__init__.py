@@ -27,7 +27,6 @@ from .brands import DEFAULT_BRAND
 from .const import (
     BACKEND_ILIFE_CLEAN,
     BACKEND_ILIFEHOME,
-    CLEANING_MODES,
     CONF_ACCESS_ID,
     CONF_ACCESS_SECRET,
     CONF_BACKEND,
@@ -53,6 +52,7 @@ from .tuya_api import (
 from .tuya_dynamic import parse_functions, range_values
 from .tuya_map import clean_map_path, clean_map_thumbnail
 from .tuya_rooms import CLEAN_ROOMS_CODE, parse_room_names
+from .protocols import MapProtocol, detect, product
 from .tuya_schedule import parse_schedules
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,10 +109,11 @@ class ILifeCoordinator(DataUpdateCoordinator):
         self.history: list[dict] = []
         self.online: bool | None = None
         self._hist_next = 0.0
-        # live map accumulation: RealTimeMap.MapData is only a small rolling window,
-        # so we merge successive windows into the full current-clean map.
-        self._rtmap_cells: dict[tuple[int, int], int] = {}
-        self._rtmap_session: Any = None
+        # map / command protocol of this model family (protocols.py): from the
+        # productKey, or from the first state when the model is unknown
+        self.protocol: MapProtocol | None = None
+        if product(device.device) is not None:
+            self.protocol = detect(device.device, None)(device)
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -130,31 +131,13 @@ class ILifeCoordinator(DataUpdateCoordinator):
                 await self.hass.async_add_executor_job(self._archive_maps)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("ILIFE history unavailable", exc_info=True)
-        self._merge_rtmap(state)
+        # unknown model: classified from the state; upgraded once SLAM properties show up
+        if self.protocol is None or (not self.protocol.commands and product(self.api.device) is None
+                                     and detect(self.api.device, state) is not type(self.protocol)):
+            self.protocol = detect(self.api.device, state)(self.api)
+            _LOGGER.debug("ILIFE %s: map protocol %s", self.api.iot_id, self.protocol.key)
+        await self.protocol.async_update(self.hass, state)
         return state
-
-    def _merge_rtmap(self, state: dict) -> None:
-        """While cleaning, accumulate the rolling RealTimeMap windows into the full
-        map and inject it back so the camera renders the whole clean, not a fragment."""
-        from .map import decode_cells, encode_cells
-
-        rtm = state.get("RealTimeMap") or {}
-        cleaning = state.get("WorkMode") in CLEANING_MODES
-        if not cleaning:
-            self._rtmap_session = None  # next clean starts a fresh map
-            return
-        md = rtm.get("MapData")
-        if not md:
-            return
-        session = state.get("RealTimeMapStart")
-        if session != self._rtmap_session:
-            self._rtmap_session = session
-            self._rtmap_cells = {}
-        for x, y, t in decode_cells(md):
-            self._rtmap_cells[(x, y)] = t
-        merged = dict(rtm)
-        merged["MapData"] = encode_cells(self._rtmap_cells)
-        state["RealTimeMap"] = merged
 
     def _archive_maps(self) -> None:
         """Save each clean's map as a tiny PNG under www/ilife_maps/ (permanent gallery)."""

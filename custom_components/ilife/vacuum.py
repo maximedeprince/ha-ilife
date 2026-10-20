@@ -1,6 +1,8 @@
 """ILIFE vacuum entity (ILIFEHOME) and ILIFE Clean (Tuya) vacuum entity."""
 from __future__ import annotations
 
+import asyncio
+
 import voluptuous as vol
 
 from homeassistant.components.vacuum import (
@@ -14,6 +16,7 @@ from homeassistant.helpers import config_validation as cv, entity_platform
 from .api import ILifeError, ILifeOfflineError
 from .const import (
     BACKEND_ILIFE_CLEAN,
+    BUSY_MODES,
     CLEANING_MODES,
     DOCKED_MODES,
     DOMAIN,
@@ -41,6 +44,7 @@ from .const import (
     suction_label,
 )
 from .entity import ILifeEntity
+from .protocols import MapProtocol, detect
 from .tuya_api import TuyaError, TuyaOfflineError
 from .tuya_dynamic import (
     command_for,
@@ -66,6 +70,14 @@ CLEAN_ROOMS_SCHEMA = {
     vol.Required("rooms"): vol.All(cv.ensure_list, [vol.Any(vol.Coerce(int), cv.string)]),
     vol.Optional("passes", default=1): vol.All(vol.Coerce(int), vol.Range(1, MAX_PASSES)),
 }
+SERVICE_CLEAN_ZONE = "clean_zone"
+CLEAN_ZONE_SCHEMA = {
+    # one rectangle, in map coordinates (the camera's calibration_points)
+    vol.Required("zone"): vol.All(cv.ensure_list, [vol.Coerce(float)], vol.Length(min=4, max=4)),
+    vol.Optional("passes", default=1): vol.All(vol.Coerce(int), vol.Range(1, MAX_PASSES)),
+}
+SERVICE_GO_TO = "go_to"
+GO_TO_SCHEMA = {vol.Required("x"): vol.Coerce(float), vol.Required("y"): vol.Coerce(float)}
 SERVICE_SET_SCHEDULE = "set_schedule"
 SERVICE_DELETE_SCHEDULE = "delete_schedule"
 _SLOT = vol.All(vol.Coerce(int), vol.Range(1, len(SCHEDULE_CODES)))
@@ -92,14 +104,23 @@ async def async_setup_entry(hass, entry, async_add_entities):
     platform.async_register_entity_service(
         SERVICE_CLEAN_ROOMS, CLEAN_ROOMS_SCHEMA, "async_clean_rooms")
     platform.async_register_entity_service(
+        SERVICE_CLEAN_ZONE, CLEAN_ZONE_SCHEMA, "async_clean_zone")
+    platform.async_register_entity_service(
+        SERVICE_GO_TO, GO_TO_SCHEMA, "async_go_to")
+    platform.async_register_entity_service(
         SERVICE_SET_SCHEDULE, SET_SCHEDULE_SCHEMA, "async_set_schedule")
     platform.async_register_entity_service(
         SERVICE_DELETE_SCHEDULE, DELETE_SCHEDULE_SCHEMA, "async_delete_schedule")
 
 
+def _protocol(coordinator) -> MapProtocol | type[MapProtocol]:
+    """The coordinator's map protocol, or the one its productKey implies (no poll yet)."""
+    return coordinator.protocol or detect(coordinator.api.device, None)
+
+
 class ILifeVacuum(ILifeEntity, StateVacuumEntity):
     _attr_name = None  # main entity: uses the device name
-    _attr_supported_features = (
+    _base_features = (
         VacuumEntityFeature.START
         | VacuumEntityFeature.PAUSE
         | VacuumEntityFeature.STOP
@@ -113,6 +134,13 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
     def __init__(self, coordinator):
         super().__init__(coordinator)
         self._attr_unique_id = f"{self.api.iot_id}_vacuum"
+
+    @property
+    def supported_features(self):
+        # send_command only carries the map commands (room / zone / go-to)
+        if _protocol(self.coordinator).commands:
+            return self._base_features | VacuumEntityFeature.SEND_COMMAND
+        return self._base_features
 
     @property
     def activity(self):
@@ -131,7 +159,7 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
     def fan_speed(self):
         return suction_label((self.coordinator.data or {}).get("VacWateState"))
 
-    async def _cmd(self, fn, *args):
+    async def _call(self, fn, *args):
         try:
             await self.hass.async_add_executor_job(fn, *args)
         except ILifeOfflineError as err:
@@ -140,6 +168,9 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
             ) from err
         except ILifeError as err:
             raise HomeAssistantError(str(err)) from err
+
+    async def _cmd(self, fn, *args):
+        await self._call(fn, *args)
         await self.coordinator.async_request_refresh()
 
     async def async_start(self):
@@ -169,8 +200,84 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
             translation_placeholders={"action": action},
         )
 
+    # --- map commands: available when the model's map protocol supports them ---
+    @property
+    def extra_state_attributes(self):
+        proto = self.coordinator.protocol
+        return proto.vacuum_attributes() if proto else None
+
+    def _map_protocol(self, capability, action):
+        proto = self.coordinator.protocol
+        if proto is None or not getattr(proto, capability):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="map_command_unsupported",
+                translation_placeholders={"action": action},
+            )
+        proto.require_map(capability)
+        return proto
+
+    async def _prepare(self):
+        """Like the app: leave the current job (standby) before a room / zone / go-to."""
+        if (self.coordinator.data or {}).get("WorkMode") in BUSY_MODES:
+            await self._call(self.api.work_mode, 2)
+            await asyncio.sleep(1)
+
     async def async_clean_rooms(self, rooms, passes=1):
-        self._unsupported("clean rooms")
+        """Clean the given rooms (ids or names as in the app), `passes` times."""
+        mask = self._map_protocol("rooms", "clean rooms").room_mask(rooms)
+        await self._prepare()
+        await self._cmd(self.api.clean_rooms, mask, passes)
+
+    async def async_clean_zone(self, zone, passes=1):
+        self._map_protocol("zones", "clean zone")
+        await self._prepare()
+        await self._cmd(self.api.clean_zone, *zone, passes)
+
+    async def async_go_to(self, x, y):
+        self._map_protocol("goto", "go to")
+        await self._prepare()
+        await self._cmd(self.api.go_to, x, y)
+
+    async def async_send_command(self, command, params=None, **kwargs):
+        """The map commands under the names map cards send: clean_rooms /
+        app_segment_clean ({rooms|segments: [...]} or a list), clean_zone /
+        app_zoned_clean ({zone: [x1, y1, x2, y2]} or [[x1, y1, x2, y2, passes]]),
+        go_to / app_goto_target ({x, y} or [x, y])."""
+        p = params if params is not None else {}
+
+        def bad(expected):
+            return HomeAssistantError(f"{command}: params must be {expected}")
+
+        if command in ("clean_rooms", "app_segment_clean", "segment_clean"):
+            rooms = p.get("rooms", p.get("segments")) if isinstance(p, dict) else p
+            if not rooms:
+                raise bad("a list of rooms")
+            await self.async_clean_rooms(cv.ensure_list(rooms),
+                                         int(p.get("passes", 1)) if isinstance(p, dict) else 1)
+        elif command in ("clean_zone", "app_zoned_clean", "zoned_clean"):
+            if isinstance(p, dict):
+                zone, passes = p.get("zone"), p.get("passes", 1)
+            else:
+                zones = p if p and isinstance(p[0], (list, tuple)) else [p]
+                if len(zones) != 1:
+                    raise HomeAssistantError("This vacuum cleans one zone per command")
+                zone, passes = list(zones[0][:4]), (zones[0][4] if len(zones[0]) > 4 else 1)
+            if not isinstance(zone, (list, tuple)) or len(zone) != 4:
+                raise bad("[x1, y1, x2, y2]")
+            try:
+                zone, passes = [float(v) for v in zone], int(passes)
+            except (TypeError, ValueError) as err:
+                raise bad("[x1, y1, x2, y2]") from err
+            await self.async_clean_zone(zone, max(1, min(MAX_PASSES, passes)))
+        elif command in ("go_to", "app_goto_target", "goto"):
+            xy = (p.get("x"), p.get("y")) if isinstance(p, dict) else tuple(p)[:2]
+            try:
+                x, y = (float(v) for v in xy)
+            except (TypeError, ValueError) as err:
+                raise bad("{x, y} or [x, y]") from err
+            await self.async_go_to(x, y)
+        else:
+            raise HomeAssistantError(f"Unsupported command: {command}")
 
     async def async_set_schedule(self, **kwargs):
         self._unsupported("set schedule")
@@ -417,6 +524,21 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
             ) from err
         except TuyaError as err:
             raise HomeAssistantError(str(err)) from err
+
+    async def async_clean_zone(self, zone, passes=1):
+        self._unsupported_map("clean zone")
+
+    async def async_go_to(self, x, y):
+        self._unsupported_map("go to")
+
+    def _unsupported_map(self, action):
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="command_unsupported",
+            translation_placeholders={
+                "action": action,
+                "device": self.api.device.get("product_name") or "this vacuum",
+            },
+        )
 
     async def async_set_schedule(self, slot=None, time=None, days=None, enabled=None,
                                  rooms=None, cycles=None):

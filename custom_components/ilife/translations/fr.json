@@ -66,6 +66,15 @@
     },
     "ilife_clean_only": {
       "message": "« {action} » n'est disponible que sur les aspirateurs ILIFE Clean (Tuya) ; ILIFEHOME n'a pas de commande équivalente."
+    },
+    "map_command_unsupported": {
+      "message": "« {action} » nécessite un modèle avec une carte enregistrée (ILIFE A10, L100, AVA PRO MAX…) ; ce modèle n'en a pas."
+    },
+    "no_saved_map": {
+      "message": "L'aspirateur n'a pas encore de carte enregistrée (ou, pour nettoyer des pièces, pas de pièces) : cartographiez le logement et créez les pièces dans l'application."
+    },
+    "room_ambiguous": {
+      "message": "Plusieurs pièces s'appellent « {room} » ; indiquez plutôt le numéro de la pièce. Pièces connues : {rooms}."
     }
   },
   "entity": {
@@ -256,7 +265,7 @@
   "services": {
     "clean_rooms": {
       "name": "Nettoyer des pièces",
-      "description": "Nettoie uniquement les pièces indiquées (modèles laser ILIFE Clean).",
+      "description": "Nettoie uniquement les pièces indiquées (modèles laser ILIFE Clean, et modèles ILIFEHOME avec une carte enregistrée comme l'ILIFE A10 / L100 ou l'AVA PRO MAX).",
       "fields": {
         "rooms": {
           "name": "Pièces",
@@ -264,7 +273,35 @@
         },
         "passes": {
           "name": "Passages",
-          "description": "1, ou 2 pour un second passage croisé."
+          "description": "1, ou 2 pour un second passage (croisé sur les modèles ILIFE Clean)."
+        }
+      }
+    },
+    "clean_zone": {
+      "name": "Nettoyer une zone",
+      "description": "Nettoie un rectangle de la carte enregistrée (modèles ILIFEHOME avec une carte enregistrée).",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "[x1, y1, x2, y2] en coordonnées de la carte, comme les calibration_points de la caméra de la carte."
+        },
+        "passes": {
+          "name": "Passages",
+          "description": "1, ou 2 pour un second passage."
+        }
+      }
+    },
+    "go_to": {
+      "name": "Aller à un point",
+      "description": "Envoie l'aspirateur à un point de la carte enregistrée (modèles ILIFEHOME avec une carte enregistrée).",
+      "fields": {
+        "x": {
+          "name": "X",
+          "description": "Coordonnée X de la carte."
+        },
+        "y": {
+          "name": "Y",
+          "description": "Coordonnée Y de la carte."
         }
       }
     },

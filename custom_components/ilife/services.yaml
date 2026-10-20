@@ -18,6 +18,46 @@ clean_rooms:
           max: 2
           mode: box
 
+clean_zone:
+  target:
+    entity:
+      integration: ilife
+      domain: vacuum
+  fields:
+    zone:
+      required: true
+      example: "[-52, 31, 76, 159]"
+      selector:
+        object:
+    passes:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 2
+          mode: box
+
+go_to:
+  target:
+    entity:
+      integration: ilife
+      domain: vacuum
+  fields:
+    x:
+      required: true
+      selector:
+        number:
+          min: -32768
+          max: 32767
+          mode: box
+    y:
+      required: true
+      selector:
+        number:
+          min: -32768
+          max: 32767
+          mode: box
+
 set_schedule:
   target:
     entity:

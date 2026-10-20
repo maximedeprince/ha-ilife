@@ -451,6 +451,54 @@ class ILifeDevice:
     def clean_direction(self, direction):
         return self.set_prop("CleanDirection", direction, direction)
 
+    # --- SLAM ("X9") models: rooms, zones, saved maps ---
+    def set_struct(self, name, struct):
+        """Write one struct property the way the app's BaseBean does: items={name: {...}}."""
+        r = self._iot("/thing/properties/set", {"iotId": self.iot_id, "items": {name: struct}})
+        code = r.get("code")
+        if code != 200:
+            _LOGGER.debug("ILIFE set %s failed: %s", name, r)
+            if code in (9201, "9201"):
+                raise ILifeOfflineError(f"set {name} failed: device offline (code {code})")
+            raise ILifeError(f"set {name} failed (code {code})")
+        return True
+
+    def clean_rooms(self, mask, loops=1):
+        """Room clean: PartitionData = OR of the room bits. Writing it starts the clean
+        (the robot then reports WorkMode 20)."""
+        return self.set_struct("CleanPartitionData",
+                               {"PartitionData": int(mask), "CleanLoop": int(loops), "Enable": 1})
+
+    def clean_zone(self, x1, y1, x2, y2, loops=1):
+        """Rectangle clean in map coordinates (one zone per command, WorkMode 19)."""
+        from .map_x9 import encode_rect
+        return self.set_struct("CleanAreaData",
+                               {"AreaData": encode_rect(x1, y1, x2, y2), "CleanLoop": int(loops), "Enable": 1})
+
+    def go_to(self, x, y):
+        from .map_x9 import encode_point
+        return self.set_struct("PointToGo", {"Enable": 1, "PointData": encode_point(x, y)})
+
+    def map_packs(self, identifier, map_id, timestamp):
+        """All packs of one upload of a multi-pack map property (e.g. SaveMapDataX9_1),
+        from the property timeline. Only packs sharing `timestamp` are kept."""
+        d = {"identifier": identifier, "iotId": self.iot_id, "start": int(map_id or 0) * 1000,
+             "limit": 200, "end": int(time.time() * 1000), "order": "desc"}
+        r = self._iot("/living/device/property/timeline/get", d, api_ver="1.0.0")
+        if r.get("code") != 200:
+            _LOGGER.debug("ILIFE map_packs %s failed: %s", identifier, r)
+            raise ILifeError(f"map_packs failed (code {r.get('code')})")
+        packs = {}
+        for it in (r.get("data") or {}).get("items") or []:
+            raw = it.get("data")
+            try:
+                v = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except Exception:
+                continue
+            if str(v.get("TimeStamp")) == str(timestamp):  # the timeline may send it as text
+                packs.setdefault(v.get("PackId"), v)
+        return list(packs.values())
+
     def reset_part(self, field, current):
         """Reset a consumable life counter to 100% (new). Mirrors the app: the full
         PartsStatus struct is sent (tag 7, no key), the target field set to 100 and

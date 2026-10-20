@@ -58,6 +58,7 @@ back the four fields and the brand ships.
 - 📅 Per‑day schedules (enable + time)
 - 🔋 Battery, brushes and filter wear, last clean, connectivity (online/offline)
 - 🗺️ Live map camera + **clickable cleaning history with the day's map**
+- 🏠 Saved map with **rooms**, **room / zone cleaning** and **go to point** on models with a saved map (ILIFE A10 / L100, AVA PRO MAX… — see below)
 - 🖼️ Each cleaning is archived as a tiny PNG in `www/ilife_maps/`
 - 🧩 Bundled **ILIFE Vacuum Card** — added from the UI, **responsive** (2 columns on desktop, 1 on mobile), English + French + Polish
 - 👥 Multiple vacuums and multiple accounts supported
@@ -285,6 +286,65 @@ a stored map; the integration then backs off rather than polling a map that is
 never coming. "Downloaded but could not be decoded" means the map arrived in a
 shape the decoder does not know: please open an issue with the diagnostics file,
 which describes the map file without including the floor plan.
+
+## Saved map, rooms and zones (ILIFEHOME)
+
+Brands (`brands.py`) say how to reach the cloud; **map protocols** (`protocols.py`)
+say how a *model* reports its map and which map commands it accepts. The protocol
+comes from the device's productKey, with the `mapType` table the ILIFEHOME app and
+its rebrands ship (`over_sea_robot.json`, `zaco_robot.json`, …), so it does not
+depend on the brand:
+
+| Protocol | App `mapType` | Models | Map |
+|---|---|---|---|
+| `slam_x9` | 3 | ILIFE A10 / A10s / A10 White / L100, X900 / X910, ZACO A10, AVA PRO MAX | saved map with rooms, room / zone clean, go to point |
+| `realtime` | 1, 2, 4 | V3x, V5x, A4s Pro, A8 / A80, A9 / A9s, B5 Max, W400 / W450… | live cleaning map, as before |
+
+A model missing from the table is classified from the properties it reports.
+
+On `slam_x9` models the map camera draws the **selected saved map** with its rooms
+coloured (names as in the app), the area cleaned so far, the path, the robot and the
+dock. The vacuum's `rooms` attribute (`{room id: name}`) drives the card's *Rooms*
+chips, like on ILIFE Clean. Room ids are bits (1, 2, 4, 8…), as the robot itself
+encodes a multi-room selection. If the robot is busy, it is put on standby first, as
+the app does.
+
+```yaml
+action: ilife.clean_rooms
+target: { entity_id: vacuum.ava_pro_max }
+data: { rooms: [1, "Kitchen"], passes: 1 }   # names as in the app, or room ids
+
+action: ilife.clean_zone                      # one rectangle per command
+target: { entity_id: vacuum.ava_pro_max }
+data: { zone: [-52, 31, 76, 159], passes: 1 } # [x1, y1, x2, y2], map coordinates
+
+action: ilife.go_to
+target: { entity_id: vacuum.ava_pro_max }
+data: { x: 27, y: 113 }
+```
+
+`vacuum.send_command` takes the same commands, also under the names map cards send
+(`app_segment_clean`, `app_zoned_clean`, `app_goto_target`). The map camera publishes
+`calibration_points` and `rooms` (with pixel positions), so
+[xiaomi-vacuum-map-card](https://github.com/PiotrMachowski/lovelace-xiaomi-vacuum-map-card)
+can draw zones and send the robot somewhere on the map:
+
+```yaml
+type: custom:xiaomi-vacuum-map-card
+entity: vacuum.ava_pro_max
+map_source:
+  camera: camera.ava_pro_max_map
+calibration_source:
+  camera: true
+map_modes:
+  - template: vacuum_clean_zone
+    max_selections: 1
+  - template: vacuum_goto
+```
+
+Checked against an AVA PRO MAX (map, rooms and the zone bytes its app sends); ILIFE
+A10 / L100 owners, please report how it goes. Not available yet: virtual walls and
+no-go zones, and switching between saved maps (the app's selected map is used).
 
 ## Rooms, programs and schedules (ILIFE Clean)
 
