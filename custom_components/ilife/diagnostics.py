@@ -2,12 +2,15 @@
 
 Home Assistant exposes a "Download diagnostics" button on the integration and on
 each device. It dumps the account setup plus, for every vacuum, the raw property
-payload the cloud returns (including the map fields). This is the data to attach
-to a bug report when a map renders blank or a model behaves differently, since it
-shows the actual keys and values the device reports.
+payload the cloud returns. This is the data to attach to a bug report when a map
+renders blank or a model behaves differently, since it shows the actual keys and
+values the device reports.
 
 Credentials and account/device identifiers are redacted before the file is
-written, so it is safe to share.
+written, so it is safe to share. So are the ILIFEHOME map properties' bodies: the
+saved and live maps, the path and the room names are the home's floor plan and its
+occupants' names. What stays is their size and the map header, which is what tells
+a map the decoder cannot read from one it misdraws.
 
 On ILIFE Clean the dump also probes Tuya's separate realtime-map API, because
 "the map is blank" is otherwise indistinguishable from "this account cannot reach
@@ -18,6 +21,8 @@ the home's floor plan, and this file is routinely attached to public issues.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 from typing import Any
 
@@ -63,7 +68,54 @@ TO_REDACT = {
     "lon",
     "sn",
     "wifi_info",  # the robot's LAN address, among the product properties
+    # ILIFEHOME WiFiInfo
+    "IP",
+    "MAC",
 }
+
+# ILIFEHOME properties that carry the floor plan, the path, zones or the room names,
+# base64-encoded: RealTimeMap / CleanHistory (gyro models), SaveMapDataX9_n,
+# SaveMapDataInfoX9_n, RealMapData_n, RealMapRoadData, MapRoomInfoN (SLAM models)...
+_MAP_PROPERTY_PREFIXES = (
+    "RealTimeMap", "RealMap", "SaveMap", "MapRoomInfo", "CleanHistory", "CleanAreaData",
+    "ForbiddenAreaData", "VirtualWallData", "PointToGo",
+)
+# Shorter strings are ids and flags, not drawings.
+_BLOB_MIN_LENGTH = 17
+
+
+def _describe_blob(value: str) -> str:
+    try:
+        return f"<{len(base64.b64decode(value, validate=True))} bytes>"
+    except (binascii.Error, ValueError):
+        return f"<{len(value)} characters>"
+
+
+def _without_map_bodies(state: dict[str, Any]) -> dict[str, Any]:
+    """The state with every map-bearing blob replaced by its size. A grid keeps its
+    8-byte header (type, resolution, origin, row width), in hex."""
+    out: dict[str, Any] = {}
+    for key, value in state.items():
+        if not key.startswith(_MAP_PROPERTY_PREFIXES):
+            out[key] = value
+        elif isinstance(value, str) and len(value) >= _BLOB_MIN_LENGTH:
+            out[key] = _describe_blob(value)
+        elif isinstance(value, dict):
+            described = {}
+            for field, item in value.items():
+                if isinstance(item, str) and len(item) >= _BLOB_MIN_LENGTH:
+                    described[field] = _describe_blob(item)
+                    if field == "MapData1":
+                        try:
+                            described["MapData1_header"] = base64.b64decode(item)[:8].hex()
+                        except (binascii.Error, ValueError):
+                            pass
+                else:
+                    described[field] = item
+            out[key] = described
+        else:
+            out[key] = value
+    return out
 
 
 def _device_diag(coordinator: Any) -> dict[str, Any]:
@@ -78,10 +130,18 @@ def _device_diag(coordinator: Any) -> dict[str, Any]:
     diag: dict[str, Any] = {
         "device": async_redact_data(coordinator.api.device, TO_REDACT),
         "online": coordinator.online,
-        # The full state as returned by the cloud, with the accumulated live map
-        # merged in. This is where a blank-map or unknown-model issue shows up.
-        "state": async_redact_data(coordinator.data or {}, TO_REDACT),
+        # The full state as returned by the cloud, the maps' bodies left out. This is
+        # where a blank-map or unknown-model issue shows up.
+        "state": async_redact_data(_without_map_bodies(coordinator.data or {}), TO_REDACT),
     }
+    # ILIFEHOME only: which map protocol the model got, and what it made of the map.
+    protocol = getattr(coordinator, "protocol", None)
+    if protocol is not None:
+        diag["map_protocol"] = protocol.diagnostics()
+    # ILIFE Clean only: the calls made against the Cloud Project's quota (#32).
+    client = getattr(coordinator.api, "client", None)
+    if hasattr(client, "usage"):
+        diag["tuya_api_usage"] = client.usage()
     # ILIFEHOME only: the parsed clean history behind the map archive.
     history = getattr(coordinator, "history", None)
     if history is not None:

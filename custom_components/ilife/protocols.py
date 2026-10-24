@@ -69,6 +69,7 @@ PRODUCTS: dict[str, tuple[str, str, int]] = {
     "a1cdxiwZfP9": ("X800", "X800", 1),
     "a1wBeDmFnJu": ("X787", "X787", 1),
     "a1r76ksgLTV": ("V3x", "X320", 1),
+    "a1uDIqJ4a8u": ("V3x", "X320", 1),  # the EU V3x, as a live one reports it
     "a1JyoDFAJQT": ("X451", "X434", 1),
     "a1ogWJdRVNo": ("X781", "X781", 1),
 }
@@ -111,6 +112,11 @@ class MapProtocol:
 
     def require_map(self, capability: str) -> None:
         """Raise when a map command can't run yet (e.g. no saved map)."""
+
+    def diagnostics(self) -> dict:
+        """What the protocol made of the map, for the diagnostics file: sizes and
+        counts only, never the plan or the room names."""
+        return {"key": self.key}
 
 
 class RealTimeMapProtocol(MapProtocol):
@@ -160,6 +166,9 @@ class RealTimeMapProtocol(MapProtocol):
         from .map import render_png
 
         return render_png(state)
+
+    def diagnostics(self) -> dict:
+        return {"key": self.key, "live_cells": len(self._cells)}
 
 
 class SlamX9Protocol(MapProtocol):
@@ -224,7 +233,9 @@ class SlamX9Protocol(MapProtocol):
         working = state.get("WorkMode") in CLEANING_MODES | PAUSED_MODES
         session = state.get("RealTimeMapStart")
         self.live = {}
-        if working:
+        # Without a saved map, the last clean's live map is all there is to show, which
+        # is what these models showed before they had a protocol of their own.
+        if working or not self.saved:
             packs = map_x9.live_packs(state, session)
             if packs:
                 self.live = (await hass.async_add_executor_job(
@@ -282,6 +293,18 @@ class SlamX9Protocol(MapProtocol):
         # same shape as the ILIFE Clean vacuums' `rooms`: {room id: name as in the app}
         return {"map_id": self.map_id, "map_name": self.map_name,
                 "rooms": {r["id"]: r["name"] for r in self.room_list}}
+
+    def diagnostics(self) -> dict:
+        return {
+            "key": self.key,
+            "map_id": self.map_id,
+            "saved_cells": len(self.saved),
+            "live_cells": len(self.live),
+            "path_points": len(self.path),
+            "room_ids": [r["id"] for r in self.room_list],
+            # how many of them the app has names for (MapRoomInfo)
+            "named_rooms": len(self._rooms_key[2]) if self._rooms_key else 0,
+        }
 
     def require_map(self, capability: str) -> None:
         # rooms need the app's room segmentation; zones and go-to only a saved map

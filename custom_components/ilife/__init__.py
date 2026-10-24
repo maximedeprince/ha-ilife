@@ -16,7 +16,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -46,11 +46,23 @@ from .tuya_api import (
     TuyaAuthError,
     TuyaClient,
     TuyaError,
+    TuyaQuotaError,
     TuyaVacuum,
     parse_record_extend,
 )
 from .tuya_dynamic import parse_functions, range_values
 from .tuya_map import clean_map_path, clean_map_thumbnail
+from .tuya_polling import (
+    ACTIVE_INTERVAL,
+    COMMAND_FOLLOW_UP,
+    HISTORY_AFTER_RUN,
+    HISTORY_AFTER_RUN_INTERVAL,
+    HISTORY_INTERVAL,
+    PROPERTIES_INTERVAL,
+    QUOTA_RETRY_INTERVAL,
+    busy,
+    poll_interval,
+)
 from .tuya_rooms import CLEAN_ROOMS_CODE, parse_room_names
 from .protocols import MapProtocol, detect, product
 from .tuya_schedule import parse_schedules
@@ -114,6 +126,7 @@ class ILifeCoordinator(DataUpdateCoordinator):
         self.protocol: MapProtocol | None = None
         if product(device.device) is not None:
             self.protocol = detect(device.device, None)(device)
+        self._map_failed = False
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -136,7 +149,19 @@ class ILifeCoordinator(DataUpdateCoordinator):
                                      and detect(self.api.device, state) is not type(self.protocol)):
             self.protocol = detect(self.api.device, state)(self.api)
             _LOGGER.debug("ILIFE %s: map protocol %s", self.api.iot_id, self.protocol.key)
-        await self.protocol.async_update(self.hass, state)
+        # An exception here would fail the whole poll, and with it every entity of the
+        # vacuum: a map the decoder does not understand must cost the map, nothing else.
+        try:
+            await self.protocol.async_update(self.hass, state)
+        except Exception:  # noqa: BLE001
+            _LOGGER.log(
+                logging.DEBUG if self._map_failed else logging.WARNING,
+                "ILIFE %s: the %s map could not be read; the vacuum works without it. "
+                "Please report this with the diagnostics file",
+                self.api.iot_id, self.protocol.key, exc_info=True)
+            self._map_failed = True
+        else:
+            self._map_failed = False
         return state
 
     def _archive_maps(self) -> None:
@@ -167,14 +192,22 @@ class ILifeCoordinator(DataUpdateCoordinator):
 
 
 class ILifeTuyaCoordinator(DataUpdateCoordinator):
-    """Polls one ILIFE Clean (Tuya) vacuum's status: {dp_code: value}."""
+    """Polls one ILIFE Clean (Tuya) vacuum's status: {dp_code: value}.
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, device: TuyaVacuum) -> None:
+    Every call counts against the user's Tuya Cloud Project quota, so the pace follows
+    what the vacuum is doing (tuya_polling.py).
+    """
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, device: TuyaVacuum,
+                 vacuums: int = 1) -> None:
         super().__init__(
             hass, _LOGGER, name=f"{DOMAIN}_{device.device_id}",
-            update_interval=timedelta(seconds=30), config_entry=entry,
+            update_interval=timedelta(seconds=ACTIVE_INTERVAL), config_entry=entry,
         )
         self.api = device
+        self._vacuums = vacuums
+        self._follow_up_until = 0.0
+        self._quota_spent = False
         self.online: bool | None = None
         self.spec: dict = {}
         self.spec_functions: dict = {}
@@ -192,6 +225,7 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
         # Not during setup: listing the maps downloads up to HISTORY_SIZE files.
         self._history_next = _time.monotonic() + 30
         self._history_fast_until = 0.0
+        self._newest_record: str | None = None
         self._was_cleaning = False
 
     @property
@@ -204,24 +238,31 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
 
     def _watch_run_end(self, status: dict[str, Any]) -> None:
         """A finished run is stored within a minute or so: look for it right away,
-        then every minute for a while, instead of on the idle 5-minute cadence."""
+        then at every poll for a while, instead of on the idle cadence."""
         cleaning = str(status.get(TUYA_DP_STATUS) or "").lower() in TUYA_STATUS_CLEANING
         if self._was_cleaning and not cleaning:
             self._history_next = 0.0
-            self._history_fast_until = _time.monotonic() + 600
+            self._history_fast_until = _time.monotonic() + HISTORY_AFTER_RUN
         self._was_cleaning = cleaning
 
     async def _async_update_history(self) -> None:
         now = _time.monotonic()
         if now < self._history_next:
             return
-        self._history_next = now + (60 if now < self._history_fast_until else 300)
+        fast = now < self._history_fast_until
+        self._history_next = now + (HISTORY_AFTER_RUN_INTERVAL if fast else HISTORY_INTERVAL)
         try:
             records = await self.hass.async_add_executor_job(
                 self.api.stored_map_records, HISTORY_SIZE)
         except TuyaError:
             _LOGGER.debug("ILIFE Clean history unavailable", exc_info=True)
             return
+        newest = str(records[0]["id"]) if records else None
+        if fast and newest != self._newest_record:
+            # the run just finished is stored: back to the idle cadence
+            self._history_fast_until = 0.0
+            self._history_next = now + HISTORY_INTERVAL
+        self._newest_record = newest
         history = []
         for record in records:
             record_id = str(record["id"])
@@ -307,7 +348,7 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
     async def _async_update_properties(self) -> None:
         if _time.monotonic() < self._properties_next:
             return
-        self._properties_next = _time.monotonic() + 300
+        self._properties_next = _time.monotonic() + PROPERTIES_INTERVAL
         try:
             self.properties = await self.hass.async_add_executor_job(self.api.properties)
         except (TuyaError, AttributeError, TypeError):
@@ -318,7 +359,45 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
         except Exception:  # noqa: BLE001 — names are cosmetic, keep the old ones
             _LOGGER.debug("ILIFE Clean room names unreadable", exc_info=True)
 
+    async def async_request_refresh(self) -> None:
+        """Asked for after every command: follow the vacuum at the active pace for a
+        while, so that what the command started shows up without an idle wait."""
+        self._follow_up_until = _time.monotonic() + COMMAND_FOLLOW_UP
+        await super().async_request_refresh()
+
+    @property
+    def _quota_issue_id(self) -> str:
+        return f"tuya_quota_spent_{self.config_entry.entry_id}"
+
+    def _quota_spent_now(self, spent: bool) -> None:
+        """Say so in Repairs while the project's monthly quota is spent, and try once an
+        hour instead of every poll; nothing gets through until it refreshes (#32)."""
+        if spent == self._quota_spent:
+            return
+        self._quota_spent = spent
+        if spent:
+            _LOGGER.warning(
+                "ILIFE Clean: the Tuya Cloud Project has used up this month's API calls. "
+                "Tuya blocks it until the quota refreshes; trying again once an hour")
+            ir.async_create_issue(
+                self.hass, DOMAIN, self._quota_issue_id, is_fixable=False,
+                severity=ir.IssueSeverity.WARNING, translation_key="tuya_quota_spent",
+                learn_more_url="https://github.com/maximedeprince/ha-ilife#tuya-api-quota")
+        else:
+            _LOGGER.info("ILIFE Clean: the Tuya Cloud Project answers again")
+            ir.async_delete_issue(self.hass, DOMAIN, self._quota_issue_id)
+
     async def _async_update_data(self) -> dict[str, Any]:
+        # The status first: when the quota is spent, it is the only call this poll makes.
+        try:
+            detail = await self.hass.async_add_executor_job(self.api.detail)
+        except TuyaQuotaError as err:
+            self._quota_spent_now(True)
+            self.update_interval = timedelta(seconds=QUOTA_RETRY_INTERVAL)
+            raise UpdateFailed(str(err)) from err
+        except TuyaError as err:
+            raise UpdateFailed(str(err)) from err
+        self._quota_spent_now(False)
         if not self._spec_loaded:
             try:
                 self.spec = await self.hass.async_add_executor_job(self.api.specification)
@@ -332,10 +411,6 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("ILIFE Clean thing model unavailable", exc_info=True)
             self._spec_loaded = True
         await self._async_update_properties()
-        try:
-            detail = await self.hass.async_add_executor_job(self.api.detail)
-        except TuyaError as err:
-            raise UpdateFailed(str(err)) from err
         self.online = detail.get("online")
         status = {s["code"]: s.get("value") for s in detail.get("status") or [] if s.get("code")}
         self._watch_run_end(status)
@@ -343,6 +418,8 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
             await self._async_update_history()
         except Exception:  # noqa: BLE001 — the history must never fail the status poll
             _LOGGER.debug("ILIFE Clean history update failed", exc_info=True)
+        self.update_interval = timedelta(seconds=poll_interval(
+            busy(status), self._vacuums, _time.monotonic(), self._follow_up_until))
         return status
 
 
@@ -429,7 +506,7 @@ async def _async_setup_ilife_clean_entry(hass: HomeAssistant, entry: ConfigEntry
 
     coordinators: dict[str, ILifeTuyaCoordinator] = {}
     for dev in vacuums:
-        coordinator = ILifeTuyaCoordinator(hass, entry, TuyaVacuum(client, dev))
+        coordinator = ILifeTuyaCoordinator(hass, entry, TuyaVacuum(client, dev), len(vacuums))
         await coordinator.async_refresh()
         coordinators[dev["id"]] = coordinator
     if not coordinators:

@@ -26,7 +26,9 @@ import hmac
 import json
 import logging
 import os.path
+import re
 import time
+from collections import Counter
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -88,6 +90,14 @@ class TuyaOfflineError(TuyaError):
     """Device reports offline — command not delivered."""
 
 
+class TuyaQuotaError(TuyaError):
+    """The Cloud Project's monthly API quota is spent: nothing gets through until it
+    refreshes, so the caller should stop trying for a while (#32)."""
+
+
+_QUOTA_CODES = {28841004}
+
+
 # Tuya OpenAPI codes that mean "the Cloud Project/UID setup is wrong", not "try again
 # later" — these must surface as an authentication problem so the user fixes the setup
 # instead of waiting for a retry that can never succeed.
@@ -119,6 +129,12 @@ _CODE_HINTS: dict[int, str] = {
               "Basic Service) — subscribe to it on iot.tuya.com, it is free",
     28841105: "the Cloud Project is missing an API subscription (IoT Core / Smart Home "
               "Basic Service) — subscribe to it on iot.tuya.com, it is free",
+    # Nothing to fix in the setup: the month's calls are spent (#32).
+    28841004: "the Cloud Project has used up this month's API calls (the free Trial "
+              "Edition allows about 26,000 a month) and Tuya blocks it until the quota "
+              "refreshes, at the start of the next monthly cycle. Since 0.8.0 this "
+              "integration needs about 14,000 a month for a vacuum that cleans an hour "
+              "a day; the diagnostics file shows how many it made",
 }
 
 # The map endpoints belong to a service of their own, so a permission error there is
@@ -179,9 +195,16 @@ def _api_error(code, msg: str, path: str, *, server_t=None,
     if note:
         text += f". {note}"
     _LOGGER.debug("Tuya call failed: %s", text)
+    if code in _QUOTA_CODES:
+        return TuyaQuotaError(text, code)
     if force_auth or code in _AUTH_CODES:
         return TuyaAuthError(text, code)
     return TuyaError(text, code)
+
+
+def _endpoint(path: str) -> str:
+    """An API path with its device id / UID and query left out, to count calls by kind."""
+    return re.sub(r"/[A-Za-z0-9]{16,}(?=/|$)", "/{id}", path.split("?", 1)[0])
 
 
 def _headers(method, path, body_bytes, access_id, access_secret, token=""):
@@ -250,12 +273,30 @@ class TuyaClient:
         self.host = TUYA_REGIONS[self.region]
         self._token: str | None = None
         self._token_expiry = 0.0
+        # Every call made, by endpoint: each one counts against the project's quota.
+        self.calls: Counter[str] = Counter()
+        self._calls_since = time.time()
+
+    def usage(self) -> dict:
+        """The calls made since Home Assistant started, for the diagnostics file. The
+        startup calls (specification, model, history) make the daily rate read high
+        for the first hours."""
+        hours = max((time.time() - self._calls_since) / 3600, 1 / 60)
+        total = sum(self.calls.values())
+        return {
+            "since": datetime.datetime.fromtimestamp(
+                self._calls_since, datetime.timezone.utc).isoformat(timespec="seconds"),
+            "calls": total,
+            "per_day": round(total * 24 / hours),
+            "by_endpoint": dict(self.calls.most_common()),
+        }
 
     # --- transport ---
     def _call(self, method, path, body=None, _retry=True, hints=None):
         body_bytes = json.dumps(body).encode() if body is not None else b""
         headers = _headers(method, path, body_bytes, self.access_id, self.access_secret,
                            self._token or "")
+        self.calls[f"{method} {_endpoint(path)}"] += 1
         r = _do(self.host, method, path, headers, body_bytes if body is not None else None)
         if r.get("success") is not True:
             code = r.get("code")
@@ -275,6 +316,7 @@ class TuyaClient:
         body_bytes = b""
         headers = _headers("GET", "/v1.0/token?grant_type=1", body_bytes,
                            self.access_id, self.access_secret, "")
+        self.calls["GET /v1.0/token"] += 1
         r = _do(self.host, "GET", "/v1.0/token?grant_type=1", headers, None)
         if r.get("success") is not True:
             # A failed token request is always a project-credentials/data-center problem.

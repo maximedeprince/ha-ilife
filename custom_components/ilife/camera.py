@@ -20,15 +20,20 @@ from .const import (
     TUYA_STATUS_CLEANING,
 )
 from .entity import device_info
-from .tuya_api import TuyaError
+from .tuya_api import TuyaError, TuyaQuotaError
 from .tuya_entity import tuya_device_info
 from .tuya_dynamic import enum_command
 from .tuya_map import render_tuya_map_png
+from .tuya_polling import (
+    MAP_ACTIVE_INTERVAL,
+    MAP_AFTER_RUN,
+    MAP_AFTER_RUN_INTERVAL,
+    MAP_IDLE_INTERVAL,
+    MAP_REALTIME_TRIES,
+    MAP_RETRY_BACKOFF,
+)
 
 _LOGGER = logging.getLogger(__name__)
-TUYA_MAP_ACTIVE_CACHE_SECONDS = 30
-TUYA_MAP_IDLE_CACHE_SECONDS = 300
-TUYA_MAP_POST_CLEAN_SECONDS = 600
 TUYA_MAP_REQUEST_SECONDS = 60
 # A refused realtime endpoint is asked again this much later, not on every refresh.
 TUYA_REALTIME_RETRY_SECONDS = 3600
@@ -36,10 +41,9 @@ ISSUES_URL = "https://github.com/maximedeprince/ha-ilife/issues"
 # Not every setup gets a map: a Cloud Project without the Sweeping Robot service
 # never will, and a model may simply have none. (The V20, the A30 Pro and the T20s
 # all store one once a run has finished — the T20s was long assumed not to.) Those
-# are permanent conditions, so failures back off instead of retrying on every
-# coordinator tick — otherwise their owners get a cloud call and a traceback every
-# 30s for a map that is never coming.
-TUYA_MAP_RETRY_BACKOFF = (30, 60, 300, 900, 3600)
+# are permanent conditions, so failures back off (MAP_RETRY_BACKOFF) instead of
+# retrying on every coordinator tick — otherwise their owners get a cloud call and a
+# traceback every 30s for a map that is never coming.
 
 
 def _map_payload(files: list[dict], map_type: int) -> bytes | None:
@@ -136,6 +140,11 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
         self._request_time = 0.0
         self._was_cleaning = self._is_cleaning()
         self._post_clean_until = 0.0
+        # Live-map probes this run, and whether the endpoint ever served a map: none of
+        # the ILIFE models seen so far does, and each probe is a call against the quota.
+        self._realtime_misses = 0
+        self._realtime_seen = False
+        self._stored_tried_this_run = False
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -157,11 +166,13 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
 
     def _cache_seconds(self) -> int:
         if self._failures:
-            index = min(self._failures, len(TUYA_MAP_RETRY_BACKOFF)) - 1
-            return TUYA_MAP_RETRY_BACKOFF[index]
-        if self._is_cleaning() or time.monotonic() < self._post_clean_until:
-            return TUYA_MAP_ACTIVE_CACHE_SECONDS
-        return TUYA_MAP_IDLE_CACHE_SECONDS
+            index = min(self._failures, len(MAP_RETRY_BACKOFF)) - 1
+            return MAP_RETRY_BACKOFF[index]
+        if self._is_cleaning():
+            return MAP_ACTIVE_INTERVAL
+        if time.monotonic() < self._post_clean_until:
+            return MAP_AFTER_RUN_INTERVAL
+        return MAP_IDLE_INTERVAL
 
     def _handle_coordinator_update(self) -> None:
         cleaning = self._is_cleaning()
@@ -175,9 +186,11 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
             if self._cache_png is not None:
                 self._failures = 0
             if self._was_cleaning and not cleaning:
-                self._post_clean_until = time.monotonic() + TUYA_MAP_POST_CLEAN_SECONDS
+                self._post_clean_until = time.monotonic() + MAP_AFTER_RUN
             elif cleaning:
                 self._post_clean_until = 0.0
+                self._realtime_misses = 0
+                self._stored_tried_this_run = False
             self._was_cleaning = cleaning
         super()._handle_coordinator_update()
         # Do not make map freshness depend on whether a Lovelace card happens to be
@@ -219,13 +232,16 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
     def extra_state_attributes(self):
         return self._cache_metadata
 
-    def _note_failure(self, reason: str, *, undecodable: bool = False) -> None:
+    def _note_failure(self, reason: str, *, undecodable: bool = False,
+                      quiet: bool = False) -> None:
         """Record a failed refresh, loudly the first time and quietly after that.
 
         The first failure is worth a warning: it is usually the Cloud Project
         missing the map service, which is fixable and invisible otherwise — or a map
         that arrived and could not be read, which is a bug worth reporting. Repeats
-        are not — on a model that has no map they would never stop.
+        are not — on a model that has no map they would never stop. A spent quota is
+        never worth one here: the coordinator reports it, and the service hint would
+        send the user the wrong way.
         """
         self._failures += 1
         self._cache_metadata = {
@@ -233,7 +249,10 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
             "map_last_error": reason,
             "map_fetched_at": int(time.time()),
         }
-        if self._failures == 1 and undecodable:
+        if quiet:
+            _LOGGER.debug("ILIFE Clean map not refreshed for %s: %s",
+                          self.api.device_id, reason)
+        elif self._failures == 1 and undecodable:
             # The download worked, so the service is authorized: pointing at the
             # Tuya console here would send the user the wrong way (#30).
             _LOGGER.warning(
@@ -270,6 +289,8 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
                     return
             try:
                 await self._async_update_map()
+            except TuyaQuotaError as err:
+                self._note_failure(f"{type(err).__name__}: {err}", quiet=True)
             except TuyaError as err:
                 self._note_failure(f"{type(err).__name__}: {err}")
             except Exception as err:  # noqa: BLE001 — a map file we cannot read
@@ -287,12 +308,20 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
              during a run, since that path belongs to the previous one.
         A model whose realtime endpoint stays empty during a run falls through to 3
         and gets its path once the run is stored; the post-clean polling
-        (TUYA_MAP_POST_CLEAN_SECONDS at the active rate) picks that up.
+        (MAP_AFTER_RUN, every MAP_AFTER_RUN_INTERVAL) picks that up.
         `map_source` / `map_path` in the attributes say which case applied.
         """
         cleaning = self._is_cleaning()
-        await self._async_request_current_map()
-        live = await self._async_realtime_files()
+        live = []
+        # The live map belongs to a run in progress: asked for during one only, and
+        # only a few times unless it has ever answered with a map (#32).
+        if cleaning and (self._realtime_seen or self._realtime_misses < MAP_REALTIME_TRIES):
+            await self._async_request_current_map()
+            live = await self._async_realtime_files()
+            if live:  # a layout, or a path to draw on the stored one
+                self._realtime_seen = True
+            else:
+                self._realtime_misses += 1
         layout, path = _map_payload(live, 0), _map_payload(live, 1)
         record = None
         if layout:
@@ -300,8 +329,10 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
         else:
             # The A30 Pro stores a map only once a run is over (checked every
             # minute through a 10-minute run: nothing new), so a run in progress
-            # reuses the stored layout instead of asking for a newer one.
-            if not cleaning or self._stored is None:
+            # reuses the stored layout instead of asking for a newer one, and asks
+            # once at most when there is none yet.
+            if not cleaning or (self._stored is None and not self._stored_tried_this_run):
+                self._stored_tried_this_run = cleaning
                 await self._async_refresh_stored()
             if self._stored is None:
                 # Waiting for the first stored map is only worth the active rate
