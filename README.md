@@ -150,7 +150,12 @@ the same one-time step used by other Tuya-based integrations (e.g.
    creation, free tier). If you want the map and the cleaning history, also
    authorize the **Sweeping Robot Open Service** under the project's **Service
    API** tab — it is free, it is not subscribed by default, and the maps live
-   behind it. Everything else works without it.
+   behind it. Everything else works without it. On the authorization page, the
+   **data center selector** at the top right must show your project's data
+   center: if your project is listed greyed out there, or the map API later
+   answers that you have no project authorized, revoke the service, select your
+   project's data center and authorize it again
+   ([#30](https://github.com/maximedeprince/ha-ilife/issues/30)).
 3. On the project's **Overview** tab, copy the **Access ID (Client ID)** and
    **Access Secret (Client Secret)**.
 4. **Move the vacuum to the Tuya Smart app.** The ILIFE Clean app has no
@@ -483,7 +488,7 @@ removed this way (they would just come back on the next refresh).
 
 - Credentials are stored by Home Assistant in the config entry; they are never
   written to logs. ILIFEHOME's shared API keys are baked in (identical for
-  all ILIFE users) — no personal secret is included in this repository..
+  all ILIFE users) — no personal secret is included in this repository.
 - This is an unofficial integration, not affiliated with ILIFE, 3irobotix or Tuya.
 
 ## License
