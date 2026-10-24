@@ -80,13 +80,16 @@ CLEAN_ROOMS_SCHEMA = {
     vol.Optional("passes", default=1): vol.All(vol.Coerce(int), vol.Range(1, MAX_PASSES)),
 }
 SERVICE_CLEAN_ZONE = "clean_zone"
+# Map coordinates travel as signed 16-bit integers (map_x9.encode_rect / encode_point).
+MAP_COORD_MIN, MAP_COORD_MAX = -32768, 32767
+_MAP_COORD = vol.All(vol.Coerce(float), vol.Range(MAP_COORD_MIN, MAP_COORD_MAX))
 CLEAN_ZONE_SCHEMA = {
     # one rectangle, in map coordinates (the camera's calibration_points)
-    vol.Required("zone"): vol.All(cv.ensure_list, [vol.Coerce(float)], vol.Length(min=4, max=4)),
+    vol.Required("zone"): vol.All(cv.ensure_list, [_MAP_COORD], vol.Length(min=4, max=4)),
     vol.Optional("passes", default=1): vol.All(vol.Coerce(int), vol.Range(1, MAX_PASSES)),
 }
 SERVICE_GO_TO = "go_to"
-GO_TO_SCHEMA = {vol.Required("x"): vol.Coerce(float), vol.Required("y"): vol.Coerce(float)}
+GO_TO_SCHEMA = {vol.Required("x"): _MAP_COORD, vol.Required("y"): _MAP_COORD}
 SERVICE_SET_SCHEDULE = "set_schedule"
 SERVICE_DELETE_SCHEDULE = "delete_schedule"
 _SLOT = vol.All(vol.Coerce(int), vol.Range(1, len(SCHEDULE_CODES)))
@@ -288,13 +291,23 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         if last_seen is not None and current != {seg.id for seg in last_seen}:
             self.async_create_segments_issue()
 
+    @staticmethod
+    def _check_coords(command, *values):
+        # vacuum.send_command reaches here without the services' schema
+        if not all(MAP_COORD_MIN <= v <= MAP_COORD_MAX for v in values):
+            raise HomeAssistantError(
+                f"{command}: map coordinates must be between {MAP_COORD_MIN} and "
+                f"{MAP_COORD_MAX}")
+
     async def async_clean_zone(self, zone, passes=1):
         self._map_protocol("zones", "clean zone")
+        self._check_coords("clean zone", *zone)
         await self._prepare()
         await self._cmd(self.api.clean_zone, *zone, passes)
 
     async def async_go_to(self, x, y):
         self._map_protocol("goto", "go to")
+        self._check_coords("go to", x, y)
         await self._prepare()
         await self._cmd(self.api.go_to, x, y)
 

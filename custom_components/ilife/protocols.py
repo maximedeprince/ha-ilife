@@ -69,6 +69,7 @@ PRODUCTS: dict[str, tuple[str, str, int]] = {
     "a1cdxiwZfP9": ("X800", "X800", 1),
     "a1wBeDmFnJu": ("X787", "X787", 1),
     "a1r76ksgLTV": ("V3x", "X320", 1),
+    "a1uDIqJ4a8u": ("V3x", "X320", 1),  # the EU V3x, as a live one reports it
     "a1JyoDFAJQT": ("X451", "X434", 1),
     "a1ogWJdRVNo": ("X781", "X781", 1),
 }
@@ -224,7 +225,9 @@ class SlamX9Protocol(MapProtocol):
         working = state.get("WorkMode") in CLEANING_MODES | PAUSED_MODES
         session = state.get("RealTimeMapStart")
         self.live = {}
-        if working:
+        # Without a saved map, the last clean's live map is all there is to show, which
+        # is what these models showed before they had a protocol of their own.
+        if working or not self.saved:
             packs = map_x9.live_packs(state, session)
             if packs:
                 self.live = (await hass.async_add_executor_job(

@@ -348,8 +348,11 @@ map_modes:
   - template: vacuum_goto
 ```
 
-Checked against an AVA PRO MAX (map, rooms and the zone bytes its app sends); ILIFE
-A10 / L100 owners, please report how it goes. Not available yet: virtual walls and
+Checked against an AVA PRO MAX (map, rooms and the zone bytes its app sends), and
+against the saved map of an ILIFE L100 (the diagnostics file of
+[#4](https://github.com/maximedeprince/ha-ilife/issues/4)), which decodes into its
+three rooms. A model without a saved map shows its last clean's live map, as
+before. ILIFE A10 / L100 owners, please report how the commands go. Not available yet: virtual walls and
 no-go zones, and switching between saved maps (the app's selected map is used).
 
 ## Rooms, programs and schedules (ILIFE Clean)

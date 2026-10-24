@@ -114,6 +114,7 @@ class ILifeCoordinator(DataUpdateCoordinator):
         self.protocol: MapProtocol | None = None
         if product(device.device) is not None:
             self.protocol = detect(device.device, None)(device)
+        self._map_failed = False
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -136,7 +137,19 @@ class ILifeCoordinator(DataUpdateCoordinator):
                                      and detect(self.api.device, state) is not type(self.protocol)):
             self.protocol = detect(self.api.device, state)(self.api)
             _LOGGER.debug("ILIFE %s: map protocol %s", self.api.iot_id, self.protocol.key)
-        await self.protocol.async_update(self.hass, state)
+        # An exception here would fail the whole poll, and with it every entity of the
+        # vacuum: a map the decoder does not understand must cost the map, nothing else.
+        try:
+            await self.protocol.async_update(self.hass, state)
+        except Exception:  # noqa: BLE001
+            _LOGGER.log(
+                logging.DEBUG if self._map_failed else logging.WARNING,
+                "ILIFE %s: the %s map could not be read; the vacuum works without it. "
+                "Please report this with the diagnostics file",
+                self.api.iot_id, self.protocol.key, exc_info=True)
+            self._map_failed = True
+        else:
+            self._map_failed = False
         return state
 
     def _archive_maps(self) -> None:
