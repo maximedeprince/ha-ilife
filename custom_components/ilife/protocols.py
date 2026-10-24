@@ -113,6 +113,11 @@ class MapProtocol:
     def require_map(self, capability: str) -> None:
         """Raise when a map command can't run yet (e.g. no saved map)."""
 
+    def diagnostics(self) -> dict:
+        """What the protocol made of the map, for the diagnostics file: sizes and
+        counts only, never the plan or the room names."""
+        return {"key": self.key}
+
 
 class RealTimeMapProtocol(MapProtocol):
     """Gyro models (mapType 1) and anything without a dedicated protocol:
@@ -161,6 +166,9 @@ class RealTimeMapProtocol(MapProtocol):
         from .map import render_png
 
         return render_png(state)
+
+    def diagnostics(self) -> dict:
+        return {"key": self.key, "live_cells": len(self._cells)}
 
 
 class SlamX9Protocol(MapProtocol):
@@ -285,6 +293,18 @@ class SlamX9Protocol(MapProtocol):
         # same shape as the ILIFE Clean vacuums' `rooms`: {room id: name as in the app}
         return {"map_id": self.map_id, "map_name": self.map_name,
                 "rooms": {r["id"]: r["name"] for r in self.room_list}}
+
+    def diagnostics(self) -> dict:
+        return {
+            "key": self.key,
+            "map_id": self.map_id,
+            "saved_cells": len(self.saved),
+            "live_cells": len(self.live),
+            "path_points": len(self.path),
+            "room_ids": [r["id"] for r in self.room_list],
+            # how many of them the app has names for (MapRoomInfo)
+            "named_rooms": len(self._rooms_key[2]) if self._rooms_key else 0,
+        }
 
     def require_map(self, capability: str) -> None:
         # rooms need the app's room segmentation; zones and go-to only a saved map

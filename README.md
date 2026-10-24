@@ -397,7 +397,8 @@ good chance of working. If you own a **different model**, please try it and
 [open an issue](https://github.com/maximedeprince/ha-ilife/issues/new/choose)
 with your model, **debug logs** and the **diagnostics file** (see below) — that's
 what lets me add support. For a **blank or wrong map**, the diagnostics file is
-the key: it contains the raw map fields your model actually reports.
+the key: it lists the map fields your model actually reports, with their sizes
+and headers, and what the decoder made of them.
 
 ## Troubleshooting — debug logs
 
@@ -416,8 +417,11 @@ logger:
 For map or model‑specific problems, the fastest way to help is the diagnostics
 file. Go to **Settings → Devices & Services → ILIFE Vacuum → ⋮ → Download
 diagnostics** (there is also a per‑device button). It contains the raw property
-payload each vacuum reports, with your email, password and device IDs
-**redacted**. Attach it to the issue.
+payload each vacuum reports, with your email, password, device IDs and the
+robot's network addresses **redacted**. On ILIFEHOME the maps' bodies and the
+room names are left out too — their sizes and the map header stay, which is
+what tells a map the decoder cannot read from one it draws wrong. Attach it to
+the issue.
 
 On ILIFE Clean it also probes the map API and reports what came back: whether the
 map arrived, its header, and what the decoder made of it — the room count and

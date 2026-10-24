@@ -26,6 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.ilife.const import DOMAIN
+from custom_components.ilife.diagnostics import async_get_config_entry_diagnostics
 
 IOT_ID = "MqdfUQpJAMnFesegxTGV000000"
 V3X = "a1uDIqJ4a8u"
@@ -196,3 +197,18 @@ async def test_an_unreadable_map_costs_the_map_only(
                 if r.levelname == "WARNING" and "could not be read" in r.getMessage()]
     assert len(warnings) == 1  # once, not every poll
 
+
+async def test_diagnostics_describe_the_map_without_drawing_it(hass: HomeAssistant) -> None:
+    await _setup(hass, L100, SLAM_STATE)
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    device = diag["devices"][0]
+    text = str(device)
+    assert _b64(_saved_map()) not in text
+    assert "Kitchen" not in text and "Living room" not in text
+    assert "NCADkZL4" not in text and "-1062731638" not in text
+    assert device["state"]["SaveMapDataX9_1"]["MapData1"].endswith("bytes>")
+    assert device["state"]["SaveMapDataX9_1"]["MapData1_header"] == _saved_map()[:8].hex()
+    assert device["map_protocol"]["key"] == "slam_x9"
+    assert device["map_protocol"]["room_ids"] == [1, 2]
+    assert device["map_protocol"]["named_rooms"] == 2
