@@ -17,6 +17,21 @@ jobs:
       - run: pip install pytest pillow
       - run: python -m pytest tests/ -q
 
+  # The integration set up in a real Home Assistant, the cloud replaced (tests_ha/).
+  # Pinned: pytest-homeassistant-custom-component 0.13.373 = Home Assistant 2026.10.2,
+  # plus the requirements of the integrations it sets up (camera, frontend).
+  ha-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: >-
+          pip install pytest-homeassistant-custom-component==0.13.373
+          home-assistant-frontend==20260930.4 PyTurboJPEG==1.8.3
+      - run: python -m pytest tests_ha -q -o asyncio_mode=auto
+
   hassfest:
     runs-on: ubuntu-latest
     steps:
