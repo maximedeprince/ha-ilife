@@ -345,5 +345,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "tuya_quota_spent": {
+      "title": "ILIFE Clean: this month's Tuya API calls are used up",
+      "description": "The Tuya Cloud Project this integration signs in with has used up this month's API calls (the free Trial Edition allows about 26,000 a month), and Tuya blocks it until the quota refreshes at the start of its next monthly cycle. Until then the vacuum stays unavailable: the integration tries again once an hour, and this notice goes away by itself when the calls go through.\n\nSince version 0.8.0 the integration needs about 14,000 calls a month for a vacuum that cleans an hour a day; the diagnostics file shows how many it made. The project's usage is on iot.tuya.com, under Cloud → Cloud Services → IoT Core."
+    }
   }
 }

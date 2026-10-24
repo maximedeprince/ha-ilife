@@ -345,5 +345,11 @@
         }
       }
     }
+  },
+  "issues": {
+    "tuya_quota_spent": {
+      "title": "ILIFE Clean : les appels à l'API Tuya de ce mois sont épuisés",
+      "description": "Le projet Tuya Cloud utilisé par cette intégration a consommé tous les appels d'API du mois (l'édition d'essai gratuite en autorise environ 26 000 par mois), et Tuya le bloque jusqu'au renouvellement du quota, au début de son prochain cycle mensuel. D'ici là, l'aspirateur reste indisponible : l'intégration réessaie une fois par heure, et ce message disparaît tout seul dès que les appels passent de nouveau.\n\nDepuis la version 0.8.0, l'intégration a besoin d'environ 14 000 appels par mois pour un aspirateur qui nettoie une heure par jour ; le fichier de diagnostics indique combien elle en a fait. La consommation du projet se consulte sur iot.tuya.com, dans Cloud → Cloud Services → IoT Core."
+    }
   }
 }

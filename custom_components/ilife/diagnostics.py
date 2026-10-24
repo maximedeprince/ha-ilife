@@ -138,6 +138,10 @@ def _device_diag(coordinator: Any) -> dict[str, Any]:
     protocol = getattr(coordinator, "protocol", None)
     if protocol is not None:
         diag["map_protocol"] = protocol.diagnostics()
+    # ILIFE Clean only: the calls made against the Cloud Project's quota (#32).
+    client = getattr(coordinator.api, "client", None)
+    if hasattr(client, "usage"):
+        diag["tuya_api_usage"] = client.usage()
     # ILIFEHOME only: the parsed clean history behind the map archive.
     history = getattr(coordinator, "history", None)
     if history is not None:

@@ -81,6 +81,8 @@ back the four fields and the brand ships.
   **cleaning history** with each clean's area, duration and map — see
   [Rooms, programs and schedules](#rooms-programs-and-schedules-ilife-clean)
 - 📊 Lifetime totals (area, time, number of cleanings) where the device reports them
+- 📉 Paced to stay well inside the free Tuya Trial Edition's monthly API quota — see
+  [Tuya API quota](#tuya-api-quota)
 
 Everything above is derived from the device's own live `/specifications` response, so
 each model gets exactly the controls it advertises and nothing it does not. Only
@@ -193,6 +195,49 @@ the same one-time step used by other Tuya-based integrations (e.g.
 > Projects, and each integration talks to its own. You will simply see the
 > vacuum twice in Home Assistant; disable whichever set of entities you don't
 > want.
+
+> **Fully local?** This integration goes through Tuya's cloud, so it stops when
+> the vacuum or Home Assistant has no internet. Start, stop, return to the dock
+> and the other data points can also be driven over the local network with
+> [tuya-local](https://github.com/make-all/tuya-local), which makes no cloud call
+> at all ([#33](https://github.com/maximedeprince/ha-ilife/issues/33)). The two
+> can run side by side; the maps and the cleaning history exist only in Tuya's
+> cloud.
+
+### Tuya API quota
+
+Every call the integration makes counts against your Cloud Project's quota. The
+free Trial Edition allows about **26,000 calls a month** and does not let you go
+over: once they are spent, Tuya blocks the project until the quota refreshes at
+the start of its next monthly cycle (error `28841004`, *"Your quota of Trial
+Edition is used up"*), and the vacuum is unavailable until then.
+
+Up to 0.7.1 the integration read the status every 30 seconds, with the
+properties, the stored-map list and the map on top: about 4,000 calls a day, so
+the month's allowance was gone in about a week
+([#32](https://github.com/maximedeprince/ha-ilife/issues/32)). Since 0.8.0 the
+pace follows what the vacuum is doing:
+
+| What | How often |
+|---|---|
+| Status, while cleaning or returning to the dock | every 30 s |
+| Status, for 3 minutes after a command from Home Assistant | every 30 s |
+| Status, docked or idle | every 5 min, times the number of vacuums on the project |
+| Room names and schedules | hourly, and right after a change made from Home Assistant |
+| Cleaning history and map | every 6 h, and a few times right after a run |
+| Live map (no ILIFE model fills it so far) | 3 tries per run |
+
+That is about 450 calls a day for a vacuum that cleans for an hour, some 14,000
+a month. The other side of it: a clean started from the app or by a schedule
+shows up in Home Assistant within 5 minutes rather than 30 seconds (anything
+started from Home Assistant is followed at once). The diagnostics file shows the
+calls actually made (`tuya_api_usage`), and iot.tuya.com shows the project's
+usage under **Cloud → Cloud Services → IoT Core**. Anything else using the same
+Cloud Project spends the same quota.
+
+If the quota runs out anyway, a notice appears under **Settings → System →
+Repairs**. The integration then tries once an hour, and the notice goes away by
+itself once the calls go through again.
 
 ### Pairing the vacuum in Tuya Smart
 
