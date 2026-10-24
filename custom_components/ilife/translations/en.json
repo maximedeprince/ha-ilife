@@ -66,6 +66,15 @@
     },
     "ilife_clean_only": {
       "message": "\"{action}\" is only available on ILIFE Clean (Tuya) vacuums; ILIFEHOME has no equivalent command."
+    },
+    "map_command_unsupported": {
+      "message": "\"{action}\" needs a model with a saved map (ILIFE A10, L100, AVA PRO MAX…); this vacuum's model has none."
+    },
+    "no_saved_map": {
+      "message": "The vacuum has no saved map yet (or, to clean rooms, no rooms on it): map the home and set up the rooms in the app first."
+    },
+    "room_ambiguous": {
+      "message": "Several rooms are called \"{room}\"; use the room number instead. Known rooms: {rooms}."
     }
   },
   "entity": {
@@ -256,7 +265,7 @@
   "services": {
     "clean_rooms": {
       "name": "Clean rooms",
-      "description": "Cleans only the given rooms (ILIFE Clean laser models).",
+      "description": "Cleans only the given rooms (ILIFE Clean laser models, and ILIFEHOME models with a saved map such as the ILIFE A10 / L100 or AVA PRO MAX).",
       "fields": {
         "rooms": {
           "name": "Rooms",
@@ -264,7 +273,35 @@
         },
         "passes": {
           "name": "Passes",
-          "description": "1, or 2 to add a second, crosswise pass."
+          "description": "1, or 2 for a second pass (crosswise on ILIFE Clean models)."
+        }
+      }
+    },
+    "clean_zone": {
+      "name": "Clean zone",
+      "description": "Cleans one rectangle of the saved map (ILIFEHOME models with a saved map).",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "[x1, y1, x2, y2] in map coordinates, as given by the map camera's calibration_points."
+        },
+        "passes": {
+          "name": "Passes",
+          "description": "1, or 2 for a second pass."
+        }
+      }
+    },
+    "go_to": {
+      "name": "Go to point",
+      "description": "Sends the vacuum to a point of the saved map (ILIFEHOME models with a saved map).",
+      "fields": {
+        "x": {
+          "name": "X",
+          "description": "Map X coordinate."
+        },
+        "y": {
+          "name": "Y",
+          "description": "Map Y coordinate."
         }
       }
     },
