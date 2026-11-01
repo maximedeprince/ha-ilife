@@ -51,6 +51,11 @@ STATUS_TTL = 45  # seconds; shared online-status cache at account level
 # what an omitted page means is left to the tenant — so the call asks explicitly (#26).
 DEVICE_PAGE_SIZE = 100
 DEVICE_PAGE_LIMIT = 10  # stop rather than loop forever if a tenant ignores paging
+# Alibaba IoT application code for "device offline": the vacuum drops its cloud link
+# while asleep at the dock, so an on-demand command can't be delivered. A fresh token
+# changes nothing, and the repeated full OpenAccount logins this used to trigger are
+# exactly what the account's risk-control reacts to — so 9201 must NOT re-authenticate.
+OFFLINE_CODE = 9201
 
 
 class ILifeError(Exception):
@@ -212,6 +217,29 @@ def _post_iot(brand: Brand, host, path, d, token=None, api_ver="1.0.2"):
     return _do(host, full_path, h, body)
 
 
+def _is_transient(r: dict) -> bool:
+    """A transport-level failure that _do() surfaced as {"httperror": code}: a 429 or a
+    5xx. Not an auth problem, and ambiguous as to whether a write took effect — so it
+    must neither re-authenticate nor be replayed."""
+    he = r.get("httperror")
+    return he == 429 or (isinstance(he, int) and 500 <= he <= 599)
+
+
+def _needs_reauth(r: dict) -> bool:
+    """Whether a reply looks like an expired/rejected iotToken — the only case a
+    re-login can fix. Device-offline (9201) and transient transport errors are excluded;
+    every other non-200 is treated as an auth failure, the conservative choice while the
+    exact token-expiry code is still unconfirmed in the field (#34)."""
+    code = r.get("code")
+    if code == 200:
+        return False
+    if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
+        return False
+    if _is_transient(r):
+        return False
+    return True
+
+
 # --------------------------------------------------------------------------- #
 #  Account (session) layer
 # --------------------------------------------------------------------------- #
@@ -290,11 +318,15 @@ class ILifeAccount:
 
     def _iot(self, path, d, api_ver="1.0.2", _retry=True):
         r = _post_iot(self.brand, self.api_host, path, d, token=self.token, api_ver=api_ver)
-        if r.get("code") != 200 and _retry:
+        if _retry and _needs_reauth(r):
             stale = self.token
             with self._lock:  # one re-login even if several device calls fail at once
                 if self.token == stale:
+                    _LOGGER.debug("ILIFE token rejected on %s (code %s); re-authenticating once",
+                                  path, r.get("code"))
                     self.login()
+            # The cloud refused the token, so the call never reached the device —
+            # replaying it once is safe even for a write.
             return self._iot(path, d, api_ver, _retry=False)
         return r
 
@@ -387,9 +419,9 @@ class ILifeDevice:
         code = r.get("code")
         if code != 200:
             _LOGGER.debug("ILIFE set %s failed: %s", name, r)
-            # 9201 = Alibaba IoT "device offline": the vacuum drops its cloud link
-            # while asleep at the dock, so on-demand commands can't be delivered.
-            if code in (9201, "9201"):
+            # Device offline: the vacuum drops its cloud link while asleep at the dock,
+            # so on-demand commands can't be delivered (see OFFLINE_CODE).
+            if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
                 raise ILifeOfflineError(f"set {name} failed: device offline (code {code})")
             raise ILifeError(f"set {name} failed (code {code})")
         return True
@@ -458,7 +490,7 @@ class ILifeDevice:
         code = r.get("code")
         if code != 200:
             _LOGGER.debug("ILIFE set %s failed: %s", name, r)
-            if code in (9201, "9201"):
+            if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
                 raise ILifeOfflineError(f"set {name} failed: device offline (code {code})")
             raise ILifeError(f"set {name} failed (code {code})")
         return True
@@ -511,7 +543,7 @@ class ILifeDevice:
         code = r.get("code")
         if code != 200:
             _LOGGER.debug("ILIFE reset %s failed: %s", field, r)
-            if code in (9201, "9201"):
+            if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
                 raise ILifeOfflineError(f"reset {field} failed: device offline (code {code})")
             raise ILifeError(f"reset {field} failed (code {code})")
         return True
