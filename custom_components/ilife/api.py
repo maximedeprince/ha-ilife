@@ -12,6 +12,7 @@ import base64
 import email.utils
 import hashlib
 import hmac
+import http.client
 import json
 import logging
 import threading
@@ -188,6 +189,12 @@ def _do(host, path, headers, body):
             return {"httperror": e.code, "xca": xca, "body": raw[:200].decode("utf-8", "replace")}
     except urllib.error.URLError as e:
         raise ILifeError(f"network error: {e}") from e
+    except (OSError, http.client.HTTPException) as e:
+        # A timeout or a dropped connection while reading the reply (TimeoutError,
+        # RemoteDisconnected, IncompleteRead...) is not a URLError. It used to escape as
+        # a raw exception, so a blip during HA's startup login failed the entry for good
+        # instead of the automatic retry an ILifeError (ConfigEntryNotReady) gets.
+        raise ILifeError(f"network error: {type(e).__name__}: {e}") from e
     try:
         return json.loads(raw)
     except Exception as e:
@@ -218,18 +225,27 @@ def _post_iot(brand: Brand, host, path, d, token=None, api_ver="1.0.2"):
 
 
 def _is_transient(r: dict) -> bool:
-    """A transport-level failure that _do() surfaced as {"httperror": code}: a 429 or a
-    5xx. Not an auth problem, and ambiguous as to whether a write took effect — so it
-    must neither re-authenticate nor be replayed."""
-    he = r.get("httperror")
-    return he == 429 or (isinstance(he, int) and 500 <= he <= 599)
+    """A rate-limit or a server-side error: 429 or 5xx, as the HTTP status of a non-JSON
+    reply (_do() puts it in `httperror`) or as the `code` of a JSON one. Not an auth
+    problem, and ambiguous as to whether a write took effect — so it must neither
+    re-authenticate nor be replayed."""
+    for status in (r.get("httperror"), r.get("code")):
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            continue
+        if status == 429 or 500 <= status <= 599:
+            return True
+    return False
 
 
 def _needs_reauth(r: dict) -> bool:
-    """Whether a reply looks like an expired/rejected iotToken — the only case a
-    re-login can fix. Device-offline (9201) and transient transport errors are excluded;
-    every other non-200 is treated as an auth failure, the conservative choice while the
-    exact token-expiry code is still unconfirmed in the field (#34)."""
+    """Whether a reply may be a rejected iotToken, the only case a re-login can fix.
+
+    The cloud answers 29003 ("identityId is blank") for a token it can't resolve
+    (checked live). The code for an *expired* token is still unconfirmed in the field
+    (#34), so every non-200 re-authenticates except the two a fresh token can't change:
+    the device offline (9201) and a transient 429/5xx."""
     code = r.get("code")
     if code == 200:
         return False
@@ -325,8 +341,9 @@ class ILifeAccount:
                     _LOGGER.debug("ILIFE token rejected on %s (code %s); re-authenticating once",
                                   path, r.get("code"))
                     self.login()
-            # The cloud refused the token, so the call never reached the device —
-            # replaying it once is safe even for a write.
+            # What gets here was refused by the cloud itself (a token or request error),
+            # not lost on the way to the device, so replaying it once is safe even for a
+            # write. The ambiguous failures (offline, 429/5xx) never get here.
             return self._iot(path, d, api_ver, _retry=False)
         return r
 
