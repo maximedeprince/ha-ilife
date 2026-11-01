@@ -12,6 +12,7 @@ import base64
 import email.utils
 import hashlib
 import hmac
+import http.client
 import json
 import logging
 import threading
@@ -51,6 +52,11 @@ STATUS_TTL = 45  # seconds; shared online-status cache at account level
 # what an omitted page means is left to the tenant — so the call asks explicitly (#26).
 DEVICE_PAGE_SIZE = 100
 DEVICE_PAGE_LIMIT = 10  # stop rather than loop forever if a tenant ignores paging
+# Alibaba IoT application code for "device offline": the vacuum drops its cloud link
+# while asleep at the dock, so an on-demand command can't be delivered. A fresh token
+# changes nothing, and the repeated full OpenAccount logins this used to trigger are
+# exactly what the account's risk-control reacts to — so 9201 must NOT re-authenticate.
+OFFLINE_CODE = 9201
 
 
 class ILifeError(Exception):
@@ -183,6 +189,12 @@ def _do(host, path, headers, body):
             return {"httperror": e.code, "xca": xca, "body": raw[:200].decode("utf-8", "replace")}
     except urllib.error.URLError as e:
         raise ILifeError(f"network error: {e}") from e
+    except (OSError, http.client.HTTPException) as e:
+        # A timeout or a dropped connection while reading the reply (TimeoutError,
+        # RemoteDisconnected, IncompleteRead...) is not a URLError. It used to escape as
+        # a raw exception, so a blip during HA's startup login failed the entry for good
+        # instead of the automatic retry an ILifeError (ConfigEntryNotReady) gets.
+        raise ILifeError(f"network error: {type(e).__name__}: {e}") from e
     try:
         return json.loads(raw)
     except Exception as e:
@@ -210,6 +222,38 @@ def _post_iot(brand: Brand, host, path, d, token=None, api_ver="1.0.2"):
     full_path = path + "?x-ca-request-id=" + rid
     h = _headers(brand, "application/json; charset=utf-8", "application/octet-stream; charset=utf-8", cmd5, full_path)
     return _do(host, full_path, h, body)
+
+
+def _is_transient(r: dict) -> bool:
+    """A rate-limit or a server-side error: 429 or 5xx, as the HTTP status of a non-JSON
+    reply (_do() puts it in `httperror`) or as the `code` of a JSON one. Not an auth
+    problem, and ambiguous as to whether a write took effect — so it must neither
+    re-authenticate nor be replayed."""
+    for status in (r.get("httperror"), r.get("code")):
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            continue
+        if status == 429 or 500 <= status <= 599:
+            return True
+    return False
+
+
+def _needs_reauth(r: dict) -> bool:
+    """Whether a reply may be a rejected iotToken, the only case a re-login can fix.
+
+    The cloud answers 29003 ("identityId is blank") for a token it can't resolve
+    (checked live). The code for an *expired* token is still unconfirmed in the field
+    (#34), so every non-200 re-authenticates except the two a fresh token can't change:
+    the device offline (9201) and a transient 429/5xx."""
+    code = r.get("code")
+    if code == 200:
+        return False
+    if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
+        return False
+    if _is_transient(r):
+        return False
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -290,11 +334,16 @@ class ILifeAccount:
 
     def _iot(self, path, d, api_ver="1.0.2", _retry=True):
         r = _post_iot(self.brand, self.api_host, path, d, token=self.token, api_ver=api_ver)
-        if r.get("code") != 200 and _retry:
+        if _retry and _needs_reauth(r):
             stale = self.token
             with self._lock:  # one re-login even if several device calls fail at once
                 if self.token == stale:
+                    _LOGGER.debug("ILIFE token rejected on %s (code %s); re-authenticating once",
+                                  path, r.get("code"))
                     self.login()
+            # What gets here was refused by the cloud itself (a token or request error),
+            # not lost on the way to the device, so replaying it once is safe even for a
+            # write. The ambiguous failures (offline, 429/5xx) never get here.
             return self._iot(path, d, api_ver, _retry=False)
         return r
 
@@ -387,9 +436,9 @@ class ILifeDevice:
         code = r.get("code")
         if code != 200:
             _LOGGER.debug("ILIFE set %s failed: %s", name, r)
-            # 9201 = Alibaba IoT "device offline": the vacuum drops its cloud link
-            # while asleep at the dock, so on-demand commands can't be delivered.
-            if code in (9201, "9201"):
+            # Device offline: the vacuum drops its cloud link while asleep at the dock,
+            # so on-demand commands can't be delivered (see OFFLINE_CODE).
+            if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
                 raise ILifeOfflineError(f"set {name} failed: device offline (code {code})")
             raise ILifeError(f"set {name} failed (code {code})")
         return True
@@ -458,7 +507,7 @@ class ILifeDevice:
         code = r.get("code")
         if code != 200:
             _LOGGER.debug("ILIFE set %s failed: %s", name, r)
-            if code in (9201, "9201"):
+            if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
                 raise ILifeOfflineError(f"set {name} failed: device offline (code {code})")
             raise ILifeError(f"set {name} failed (code {code})")
         return True
@@ -511,7 +560,7 @@ class ILifeDevice:
         code = r.get("code")
         if code != 200:
             _LOGGER.debug("ILIFE reset %s failed: %s", field, r)
-            if code in (9201, "9201"):
+            if code in (OFFLINE_CODE, str(OFFLINE_CODE)):
                 raise ILifeOfflineError(f"reset {field} failed: device offline (code {code})")
             raise ILifeError(f"reset {field} failed (code {code})")
         return True
