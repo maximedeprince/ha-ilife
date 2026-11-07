@@ -140,7 +140,8 @@ class ILifeCoordinator(DataUpdateCoordinator):
         if _time.monotonic() >= self._hist_next:
             self._hist_next = _time.monotonic() + 300
             try:
-                self.history = await self.hass.async_add_executor_job(self.api.clean_history, 20)
+                self.history = await self.hass.async_add_executor_job(
+                    self.api.clean_history, 20, getattr(self.protocol, "assemble_history", None))
                 await self.hass.async_add_executor_job(self._archive_maps)
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("ILIFE history unavailable", exc_info=True)

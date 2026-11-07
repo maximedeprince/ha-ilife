@@ -125,11 +125,9 @@ def charger_point(value: Any) -> tuple[int, int] | None:
     return unpack_point(v.get("Piont"))
 
 
-def render_png(m: W450Map, charger: tuple[int, int] | None = None,
-               max_px: int = 720) -> bytes | None:
-    """PNG of the map, oriented like the app."""
-    from PIL import Image, ImageDraw
-
+def geometry(m: W450Map, charger: tuple[int, int] | None = None,
+             max_px: int = 720) -> tuple[int, int, int, int, int] | None:
+    """(minx, miny, cols, rows, cell px) of the rendered image, or None when empty."""
     pts = list(m.cells) + [p for path in m.paths for p in path]
     if charger:
         pts.append(charger)
@@ -141,6 +139,33 @@ def render_png(m: W450Map, charger: tuple[int, int] | None = None,
     cols = max(p[0] for p in pts) - minx + 1 + margin
     rows = max(p[1] for p in pts) - miny + 1 + margin
     cell = max(4, min(40, max_px // max(cols, rows)))
+    return minx, miny, cols, rows, cell
+
+
+def calibration(m: W450Map, charger: tuple[int, int] | None = None) -> list[dict] | None:
+    """xiaomi-vacuum-map-card style calibration_points: map cell -> image pixel."""
+    g = geometry(m, charger)
+    if g is None:
+        return None
+    minx, miny, _cols, _rows, cell = g
+
+    def px(x: int, y: int) -> dict:
+        return {"x": round((x - minx) * cell + cell / 2), "y": round((y - miny) * cell + cell / 2)}
+
+    x0, y0 = minx + 3, miny + 3
+    return [{"vacuum": {"x": x, "y": y}, "map": px(x, y)}
+            for x, y in ((x0, y0), (x0 + 10, y0), (x0, y0 + 10))]
+
+
+def render_png(m: W450Map, charger: tuple[int, int] | None = None,
+               max_px: int = 720) -> bytes | None:
+    """PNG of the map, oriented like the app."""
+    from PIL import Image, ImageDraw
+
+    g = geometry(m, charger, max_px)
+    if g is None:
+        return None
+    minx, miny, cols, rows, cell = g
     ss = 3  # supersampling for smooth path / markers
     cs = cell * ss
     img = Image.new("RGBA", (cols * cs, rows * cs), (0, 0, 0, 0))
@@ -174,3 +199,76 @@ def render_png(m: W450Map, charger: tuple[int, int] | None = None,
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+#  Cleaning history (CleanHistory.CleanMapData packs, app historyMapType 5)
+# --------------------------------------------------------------------------- #
+def decode_history(packs: dict[Any, str]) -> tuple[W450Map, tuple[int, int] | None]:
+    """A finished clean's map from its CleanHistory packs (PackId -> CleanMapData),
+    as HistoryDetailActivity_x1000.drawHistoryMapW450 decodes it. Each pack starts with
+    a type byte:
+      1: [int16 A][int16 B][int16 H] + run-length cells — the runs of every type-1 pack
+         form one stream of 3-byte records [?, type, count] (the app ignores the first
+         byte); cells fill columns of height H: (x, y) = (column - B, -row - A)
+      2: path points, 4-byte [int16 a][int16 b] -> (-b, -a)
+      5: dock position [int16 hi][int16 lo] -> (-lo, -hi)
+      7: cleaning-zone rectangle (not drawn here)
+    """
+    m = W450Map()
+    charger = None
+    stream = bytearray()
+    a0 = b0 = height = 0
+    path: list[tuple[int, int]] = []
+    for pid in sorted(packs, key=lambda k: (k is None, k if isinstance(k, int) else 0)):
+        raw = _b64(packs[pid])
+        if not raw:
+            continue
+        kind = raw[0]
+        if kind == 1 and len(raw) >= 7:
+            a0, b0, height = struct.unpack(">hhh", raw[1:7])
+            stream += raw[7:]
+        elif kind == 2:
+            for i in range(1, len(raw) - 3, 4):
+                a, b = struct.unpack(">hh", raw[i:i + 4])
+                path.append((-b, -a))
+        elif kind == 5 and len(raw) >= 5:
+            hi, lo = struct.unpack(">hh", raw[1:5])
+            charger = (-lo, -hi)
+    if height > 0:
+        row = col = 0
+        for k in range(2, len(stream), 3):
+            typ, cnt = stream[k - 1], stream[k]
+            for _ in range(cnt):
+                if typ:
+                    m.cells[(col - b0, -row - a0)] = typ
+                if row < height - 1:
+                    row += 1
+                else:
+                    col += 1
+                    row = 0
+    if path:
+        m.paths.append(path)
+    return m, charger
+
+
+def to_clean_map(m: W450Map) -> str | None:
+    """Re-encode cells as the 2bpp CleanMapData the card / gallery understand
+    ([0x01][bytes per row] + rows, 4 cells per byte, high bits first):
+    floor shades -> 2, obstacles -> 1. Oriented like the app."""
+    if not m.cells:
+        return None
+    xs = [c[0] for c in m.cells]
+    ys = [c[1] for c in m.cells]
+    minx, miny = min(xs), min(ys)
+    w, h = max(xs) - minx + 1, max(ys) - miny + 1
+    bpr = (w + 3) // 4
+    if bpr > 255:
+        return None
+    out = bytearray([0x01, bpr]) + bytes(bpr * h)
+    for (x, y), t in m.cells.items():
+        v = 2 if t in FLOOR_COLORS else 1
+        cx, cy = x - minx, y - miny
+        i = 2 + cy * bpr + cx // 4
+        out[i] |= v << ((3 - cx % 4) * 2)
+    return base64.b64encode(bytes(out)).decode()

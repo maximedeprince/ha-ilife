@@ -482,7 +482,7 @@ class ILifeDevice:
             raise ILifeError(f"set schedule failed (code {r.get('code')})")
         return True
 
-    def clean_history(self, limit=20):
+    def clean_history(self, limit=20, assemble=None):
         """Cleaning history via the timeline endpoint (apiVer 1.0.0).
         Each clean's map is tiled into PackNum packs (PackId=1..N); we group by StartTime,
         collect the packs and stack them into one complete map. Recent first."""
@@ -518,7 +518,9 @@ class ILifeDevice:
         for start in sorted(groups, key=lambda s: s or 0, reverse=True)[:limit]:
             g = groups[start]
             out.append({"start": g["start"], "area": g["area"], "duration": g["duration"],
-                        "reason": g["reason"], "map": _assemble_maps(g["packs"])})
+                        "reason": g["reason"],
+                        # model-specific pack format (W450: protocols.W450Protocol)
+                        "map": (assemble or _assemble_maps)(g["packs"])})
         return out
 
     def is_online(self):

@@ -83,3 +83,62 @@ def test_render_draws_a_png():
 def test_empty_map_renders_nothing():
     assert w450.W450Map().empty()
     assert w450.render_png(w450.W450Map()) is None
+
+
+# ---- cleaning history (CleanHistory packs, app historyMapType 5) ----------------
+
+def _hist_cells(a0, b0, height, runs, split=1):
+    """Type-1 packs as the robot sends them: header + [0, type, count] runs."""
+    body = b"".join(bytes([0, t, n]) for t, n in runs)
+    hdr = struct.pack(">Bhhh", 1, a0, b0, height)
+    step = -(-len(body) // split // 3) * 3
+    return [base64.b64encode(hdr + body[i:i + step]).decode() for i in range(0, len(body), step)]
+
+
+def test_history_cells_follow_the_app_decoder():
+    # height 3: column 0 = rows 0..2, then column 1 ...; (x, y) = (col - B, -row - A)
+    packs = dict(enumerate(_hist_cells(10, 4, 3, [(0, 1), (10, 2), (2, 3)]), 1))
+    m, charger = w450.decode_history(packs)
+    assert m.cells == {(-4, -11): 10, (-4, -12): 10, (-3, -10): 2, (-3, -11): 2, (-3, -12): 2}
+    assert charger is None
+
+
+def test_history_runs_continue_across_packs_and_path_dock_are_read():
+    runs = [(10, 200), (0, 50), (2, 30)]
+    one = dict(enumerate(_hist_cells(0, 0, 20, runs), 1))
+    many = dict(enumerate(_hist_cells(0, 0, 20, runs, split=3), 1))
+    assert len(many) == 3
+    assert w450.decode_history(one)[0].cells == w450.decode_history(many)[0].cells
+    n = len(many)
+    many[n + 1] = base64.b64encode(b"\x02" + struct.pack(">hhhh", 1, 2, 3, 4)).decode()
+    many[n + 2] = base64.b64encode(struct.pack(">Bhh", 5, 2, -6)).decode()
+    m, charger = w450.decode_history(many)
+    assert m.paths == [[(-2, -1), (-4, -3)]]
+    assert charger == (6, -2)
+    assert len(m.cells) == 230
+
+
+def test_history_reencoded_for_the_card_and_gallery():
+    sys.path.insert(0, str(_PKG.parent.parent))
+    spec = importlib.util.spec_from_file_location("_ilife_map", _PKG / "map.py")
+    gyro = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = gyro
+    spec.loader.exec_module(gyro)
+    m, _ = w450.decode_history(dict(enumerate(_hist_cells(0, 0, 5, [(10, 12), (2, 3), (0, 5), (11, 4)]), 1)))
+    b64 = w450.to_clean_map(m)
+    cells = gyro.decode_clean_bitmap(b64)
+    got = {(x, y): t for x, y, t in cells}
+    minx = min(c[0] for c in m.cells); miny = min(c[1] for c in m.cells)
+    want = {(x - minx, y - miny): (2 if t in w450.FLOOR_COLORS else 1) for (x, y), t in m.cells.items()}
+    assert got == want
+    assert gyro.render_clean_map_png(b64)[:4] == b"\x89PNG"
+
+
+def test_calibration_points_map_cells_to_pixels():
+    m = w450.W450Map()
+    m.add_map_post({"MapData": _cells(*[(a, b, 10) for a in range(10) for b in range(20)])})
+    cal = w450.calibration(m)
+    assert len(cal) == 3
+    (p0, p1, p2) = cal
+    assert p1["vacuum"]["x"] - p0["vacuum"]["x"] == 10 and p1["map"]["x"] > p0["map"]["x"]
+    assert p2["vacuum"]["y"] - p0["vacuum"]["y"] == 10 and p2["map"]["y"] > p0["map"]["y"]

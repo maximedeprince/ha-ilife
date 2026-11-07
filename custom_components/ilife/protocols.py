@@ -408,6 +408,22 @@ class W450Protocol(MapProtocol):
 
         return render_png(self.map, self.charger)
 
+    def camera_attributes(self) -> dict | None:
+        # The camera keeps the whole last clean (rebuilt from the timeline), which is
+        # better than the history thumbnail: calibration_points tell the card to keep
+        # showing it when the robot is docked, and suit xiaomi-vacuum-map-card.
+        from .map_w450 import calibration
+
+        cal = calibration(self.map, self.charger) if not self.map.empty() else None
+        return {"calibration_points": cal} if cal else None
+
+    @staticmethod
+    def assemble_history(packs: dict) -> str | None:
+        """CleanHistory packs -> CleanMapData the card and gallery can draw."""
+        from .map_w450 import decode_history, to_clean_map
+
+        return to_clean_map(decode_history(packs)[0])
+
     def diagnostics(self) -> dict:
         types: dict[int, int] = {}
         for t in self.map.cells.values():

@@ -53,6 +53,15 @@ class FakeAccount:
             self.polls = getattr(self, "polls", 0) + 1
             data = {k: {"value": v, "time": START} for k, v in self.state.items()}
             return {"code": 200, "data": data}
+        if path == "/living/device/property/timeline/get" and d["identifier"] == "CleanHistory":
+            hdr = struct.pack(">Bhhh", 1, 0, 0, 6)
+            packs = [hdr + bytes([0, 10, 30]), hdr + bytes([0, 2, 6])]  # each pack repeats the header
+            items = [{"timestamp": START + 100 + i, "data": json.dumps({
+                "StartTime": 1794049498, "PackNum": 2, "PackId": i + 1, "CleanTotalArea": 2436,
+                "CleanTotalTime": 1605, "StopCleanReason": 1,
+                "CleanMapData": base64.b64encode(b).decode()})}
+                for i, b in enumerate(packs)]
+            return {"code": 200, "data": {"items": items}}
         if path == "/thing/property/timeline/get":
             self.timeline_calls.append(d)
             items = [{"timestamp": ts, "data": json.dumps(v)}
@@ -86,6 +95,15 @@ async def test_w450_map_is_rebuilt_from_the_timeline(hass: HomeAssistant) -> Non
     assert acc.timeline_calls[0]["start"] == START
     diag = coord.protocol.diagnostics()
     assert diag["cells"] == 48 and diag["cell_types"] == {10: 40, 2: 8}
+
+    # history: W450 packs re-encoded for the card / gallery (2bpp), not misread
+    from custom_components.ilife.map import decode_clean_bitmap
+    hist = coord.history[0]
+    cells = decode_clean_bitmap(hist["map"])
+    assert len(cells) == 36 and {t for *_xy, t in cells} == {1, 2}
+    # docked card keeps the camera: calibration_points are exposed
+    cam = hass.states.get("camera.robot_map")
+    assert len(cam.attributes["calibration_points"]) == 3
 
     image = await async_get_image(hass, "camera.robot_map")
     assert image.content[:8] == b"\x89PNG\r\n\x1a\n"
