@@ -7,7 +7,7 @@ config's `mapType` per productKey (RobotFragment): 1 = gyro / real-time map, 2 =
 built on the ILIFE app (ILIFE, ZACO, AVA...), so an ILIFE A10 and an AVA PRO MAX speak
 the same protocol.
 
-Only mapType 3 has a dedicated implementation; everything else keeps the real-time map
+mapType 3 (SlamX9Protocol) and 4 (W450Protocol) have dedicated implementations; everything else keeps the real-time map
 behaviour the integration always had. A device whose productKey is unknown is classified
 from the properties it reports.
 """
@@ -337,6 +337,101 @@ class SlamX9Protocol(MapProtocol):
         return mask
 
 
+class W450Protocol(MapProtocol):
+    """W450 / W400 / W455 floor washers (mapType 4). Like the app, the map is rebuilt
+    from the whole RealTimeMap / RealMapRoadData timeline of the current clean (polling
+    only sees a fraction of the posts), drawn with the W450 cell types and orientation
+    (map_w450.py)."""
+
+    key = "w450"
+    # Fetch new posts while the robot is out; idle/docked/asleep -> nothing new comes.
+    _QUIET_MODES = {0, 1, 2, 9, 11, 16, 17}
+    _IDLE_REFRESH = 1800  # s: still re-check now and then (a clean started from a button)
+
+    def __init__(self, api) -> None:
+        super().__init__(api)
+        from .map_w450 import W450Map
+
+        self.map = W450Map()
+        self.charger = None
+        self._session: Any = None
+        self._map_ts = 0
+        self._road_ts = 0
+        self._was_active = False
+        self._last_fetch = 0.0
+        self._version = 0
+
+    async def async_update(self, hass, state: dict) -> None:
+        import time as _time
+
+        from .map_w450 import charger_point
+
+        self.charger = charger_point(state.get("ChargerPiont"))
+        times = getattr(self.api, "prop_times", {}) or {}
+        map_start = int(times.get("RealTimeMapStart") or 0)
+        road_start = int(times.get("RealTimeRoadStart") or map_start)
+        session = (state.get("RealTimeMapStart"), map_start)
+        active = state.get("WorkMode") not in self._QUIET_MODES
+        now = _time.time()
+        if session != self._session:
+            # new clean (or first poll): rebuild the whole map, as the app does on open
+            self.map.reset()
+            self._map_ts = map_start - 1 if map_start else int(now * 1000) - 86_400_000
+            self._road_ts = road_start - 1 if road_start else self._map_ts
+            self._session = session
+        elif not (active or self._was_active or now - self._last_fetch > self._IDLE_REFRESH):
+            return
+        self._was_active = active
+        self._last_fetch = now
+        end = int(now * 1000) + 60_000
+        maps = await hass.async_add_executor_job(
+            self.api.property_timeline, "RealTimeMap", self._map_ts + 1, end)
+        roads = await hass.async_add_executor_job(
+            self.api.property_timeline, "RealMapRoadData", self._road_ts + 1, end)
+        for item in maps:
+            self.map.add_map_post(item)
+            self._map_ts = max(self._map_ts, int(item.get("timestamp") or 0))
+        for item in roads:
+            self.map.add_road_post(item)
+            self._road_ts = max(self._road_ts, int(item.get("timestamp") or 0))
+        if maps or roads:
+            self._version += 1
+
+    def has_map(self, state: dict) -> bool:
+        return not self.map.empty()
+
+    def render_key(self, state: dict):
+        return (self._version, self.charger)
+
+    def render(self, state: dict) -> bytes | None:
+        from .map_w450 import render_png
+
+        return render_png(self.map, self.charger)
+
+    def camera_attributes(self) -> dict | None:
+        # The camera keeps the whole last clean (rebuilt from the timeline), which is
+        # better than the history thumbnail: calibration_points tell the card to keep
+        # showing it when the robot is docked, and suit xiaomi-vacuum-map-card.
+        from .map_w450 import calibration
+
+        cal = calibration(self.map, self.charger) if not self.map.empty() else None
+        return {"calibration_points": cal} if cal else None
+
+    @staticmethod
+    def assemble_history(packs: dict) -> str | None:
+        """CleanHistory packs -> CleanMapData the card and gallery can draw."""
+        from .map_w450 import decode_history, to_clean_map
+
+        return to_clean_map(decode_history(packs)[0])
+
+    def diagnostics(self) -> dict:
+        types: dict[int, int] = {}
+        for t in self.map.cells.values():
+            types[t] = types.get(t, 0) + 1
+        return {"key": self.key, "cells": len(self.map.cells), "cell_types": types,
+                "path_segments": len(self.map.paths)}
+
+
 def product(device: dict) -> tuple[str, str, int] | None:
     return PRODUCTS.get((device or {}).get("productKey"))
 
@@ -345,7 +440,7 @@ def detect(device: dict, state: dict | None) -> type[MapProtocol]:
     """Known productKey -> its mapType; unknown -> from the reported properties."""
     p = product(device)
     if p is not None:
-        return SlamX9Protocol if p[2] == 3 else RealTimeMapProtocol
+        return {3: SlamX9Protocol, 4: W450Protocol}.get(p[2], RealTimeMapProtocol)
     if state and any(k in state for k in _SLAM_PROPS):
         return SlamX9Protocol
     return RealTimeMapProtocol
