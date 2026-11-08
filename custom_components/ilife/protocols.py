@@ -13,6 +13,8 @@ from the properties it reports.
 """
 from __future__ import annotations
 
+import functools
+
 import logging
 from typing import Any
 
@@ -337,6 +339,13 @@ class SlamX9Protocol(MapProtocol):
         return mask
 
 
+def _reached_clean_start(items: list) -> bool:
+    """Newest-first paging can stop once the items include a CleanTime drop."""
+    from .map_w450 import current_clean
+
+    return len(current_clean(items)) < len(items)
+
+
 class W450Protocol(MapProtocol):
     """W450 / W400 / W455 floor washers (mapType 4). Like the app, the map is rebuilt
     from the whole RealTimeMap / RealMapRoadData timeline of the current clean (polling
@@ -364,7 +373,7 @@ class W450Protocol(MapProtocol):
     async def async_update(self, hass, state: dict) -> None:
         import time as _time
 
-        from .map_w450 import charger_point
+        from .map_w450 import charger_point, current_clean
 
         self.charger = charger_point(state.get("ChargerPiont"))
         times = getattr(self.api, "prop_times", {}) or {}
@@ -384,17 +393,33 @@ class W450Protocol(MapProtocol):
         self._was_active = active
         self._last_fetch = now
         end = int(now * 1000) + 60_000
-        maps = await hass.async_add_executor_job(
-            self.api.property_timeline, "RealTimeMap", self._map_ts + 1, end)
+        if self.map.empty() and self._map_ts < end - 60_000:
+            # full load: newest first, back to where the latest clean began (the robot
+            # does not always re-report RealTimeMapStart, so it can be days old)
+            maps = await hass.async_add_executor_job(
+                functools.partial(self.api.property_timeline, "RealTimeMap", self._map_ts + 1,
+                                  end, ordered=False, stop=_reached_clean_start))
+            maps = current_clean(maps)
+            if maps:
+                first = int(maps[0].get("timestamp") or 0)
+                self._road_ts = max(self._road_ts, first - 1)
+        else:
+            maps = await hass.async_add_executor_job(
+                self.api.property_timeline, "RealTimeMap", self._map_ts + 1, end)
         roads = await hass.async_add_executor_job(
             self.api.property_timeline, "RealMapRoadData", self._road_ts + 1, end)
-        for item in maps:
-            self.map.add_map_post(item)
-            self._map_ts = max(self._map_ts, int(item.get("timestamp") or 0))
-        for item in roads:
-            self.map.add_road_post(item)
-            self._road_ts = max(self._road_ts, int(item.get("timestamp") or 0))
-        if maps or roads:
+        # one stream, in time order: a CleanTime drop in either resets the map
+        merged = sorted([(int(i.get("timestamp") or 0), 0, i) for i in maps]
+                        + [(int(i.get("timestamp") or 0), 1, i) for i in roads],
+                        key=lambda e: (e[0], e[1]))
+        for ts, kind, item in merged:
+            if kind == 0:
+                self.map.add_map_post(item)
+                self._map_ts = max(self._map_ts, ts)
+            else:
+                self.map.add_road_post(item)
+                self._road_ts = max(self._road_ts, ts)
+        if merged:
             self._version += 1
 
     def has_map(self, state: dict) -> bool:

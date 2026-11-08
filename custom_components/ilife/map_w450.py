@@ -73,13 +73,29 @@ class W450Map:
     def __init__(self) -> None:
         self.cells: dict[tuple[int, int], int] = {}
         self.paths: list[list[tuple[int, int]]] = []
+        self._clean_time: int | None = None
 
     def reset(self) -> None:
         self.cells.clear()
         self.paths.clear()
+        self._clean_time = None
+
+    def _new_clean(self, post: dict) -> None:
+        """Posts carry CleanTime (s since the clean started; it keeps counting through
+        a pause). When it goes back, a new clean has started — RealTimeMapStart is not
+        always re-reported then — so the previous clean's map must go."""
+        ct = post.get("CleanTime")
+        if not isinstance(ct, int) or isinstance(ct, bool):
+            return
+        if self._clean_time is not None and ct < self._clean_time:
+            self.cells.clear()
+            self.paths.clear()
+        self._clean_time = ct
 
     def add_map_post(self, post: Any) -> None:
-        raw = _b64(_post(post).get("MapData"))
+        post = _post(post)
+        self._new_clean(post)
+        raw = _b64(post.get("MapData"))
         for i in range(0, len(raw) - len(raw) % 5, 5):
             a, b = struct.unpack(">hh", raw[i:i + 4])
             t = raw[i + 4]
@@ -91,7 +107,9 @@ class W450Map:
             self.cells[(-b, -a)] = t
 
     def add_road_post(self, post: Any) -> None:
-        raw = _b64(_post(post).get("RoadData"))
+        post = _post(post)
+        self._new_clean(post)
+        raw = _b64(post.get("RoadData"))
         cur: list[tuple[int, int]] = []
         for i in range(0, len(raw) - len(raw) % 4, 4):
             a, b = struct.unpack(">hh", raw[i:i + 4])
@@ -115,6 +133,26 @@ class W450Map:
 
     def empty(self) -> bool:
         return not self.cells and not any(len(p) > 1 for p in self.paths)
+
+
+def clean_time(item: Any) -> int | None:
+    ct = _post(item).get("CleanTime")
+    return ct if isinstance(ct, int) and not isinstance(ct, bool) else None
+
+
+def current_clean(items: list) -> list:
+    """Oldest-first timeline items -> only those of the latest clean (after the last
+    point where CleanTime went back)."""
+    start = 0
+    prev = None
+    for i, it in enumerate(items):
+        ct = clean_time(it)
+        if ct is None:
+            continue
+        if prev is not None and ct < prev:
+            start = i
+        prev = ct
+    return items[start:]
 
 
 def charger_point(value: Any) -> tuple[int, int] | None:

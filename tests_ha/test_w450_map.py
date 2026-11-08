@@ -32,6 +32,9 @@ class FakeAccount:
     instance: "FakeAccount"
 
     def __init__(self, *args, **kwargs) -> None:
+        FakeAccount._base_init(self)
+
+    def _base_init(self) -> None:
         self.state = {"WorkMode": 6, "BatteryState": 80, "RealTimeMapStart": 1,
                       "RealTimeRoadStart": 1}
         self.timeline = {
@@ -64,9 +67,11 @@ class FakeAccount:
             return {"code": 200, "data": {"items": items}}
         if path == "/thing/property/timeline/get":
             self.timeline_calls.append(d)
+            sel = sorted(((ts, v) for ts, v in self.timeline.get(d["identifier"], [])
+                          if d["start"] <= ts <= d["end"]),
+                         key=lambda e: e[0], reverse=not d.get("ordered", True))
             items = [{"timestamp": ts, "data": json.dumps(v)}
-                     for ts, v in self.timeline.get(d["identifier"], [])
-                     if d["start"] <= ts <= d["end"]]
+                     for ts, v in sel[:d.get("pageSize", 200)]]
             return {"code": 200, "data": {"items": items}}
         return {"code": 200, "data": {"items": []}}
 
@@ -127,3 +132,38 @@ async def test_w450_map_is_rebuilt_from_the_timeline(hass: HomeAssistant) -> Non
     await coord.async_refresh()
     assert len(acc.timeline_calls) == calls_docked
     assert hass.states.get("camera.robot_map").state != "unavailable"
+
+
+async def test_w450_stale_map_start_shows_only_the_latest_clean(hass: HomeAssistant) -> None:
+    """The robot does not always re-report RealTimeMapStart: yesterday's and today's
+    posts then share one timeline; CleanTime going back marks today's start."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="u@example.com", data={
+        "backend": "ilifehome", "email": "u@example.com", "password": "pw",
+        "region": "eu", "brand": "ilife"})
+    entry.add_to_hass(hass)
+    with patch.object(FakeAccount, "__init__", _two_days_init):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    acc = FakeAccount.instance
+    coord = next(iter(hass.data[DOMAIN][entry.entry_id]["coordinators"].values()))
+    diag = coord.protocol.diagnostics()
+    assert diag["cells"] == 6 and diag["cell_types"] == {10: 6}  # today's only
+    # newest-first read stopped at today's start: yesterday's 400 posts not all paged
+    assert sum(1 for c in acc.timeline_calls if c["identifier"] == "RealTimeMap") == 1  # not 3
+    road = [c for c in acc.timeline_calls if c["identifier"] == "RealMapRoadData"][0]
+    assert road["start"] == START + 500_000
+
+    # another clean starts, RealTimeMapStart still not re-reported: map restarts
+    acc.timeline["RealTimeMap"].append((START + 900_000, {"MapData": _cells((50, 50, 11)),
+                                                          "CleanTime": 4}))
+    await coord.async_refresh()
+    assert coord.protocol.diagnostics()["cells"] == 1
+
+
+def _two_days_init(self, *args, **kwargs):
+    FakeAccount._base_init(self)
+    yesterday = [(START + i, {"MapData": _cells((i % 20, i // 20, 10)), "CleanTime": i * 4})
+                 for i in range(400)]
+    today = [(START + 500_000 + i, {"MapData": _cells((30 + i, 30, 10)), "CleanTime": 72 + i * 4})
+             for i in range(6)]
+    self.timeline = {"RealTimeMap": yesterday + today, "RealMapRoadData": []}

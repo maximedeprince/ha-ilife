@@ -142,3 +142,25 @@ def test_calibration_points_map_cells_to_pixels():
     (p0, p1, p2) = cal
     assert p1["vacuum"]["x"] - p0["vacuum"]["x"] == 10 and p1["map"]["x"] > p0["map"]["x"]
     assert p2["vacuum"]["y"] - p0["vacuum"]["y"] == 10 and p2["map"]["y"] > p0["map"]["y"]
+
+
+# ---- a new clean when RealTimeMapStart is not re-reported --------------------------
+
+def test_cleantime_going_back_starts_a_new_map():
+    m = w450.W450Map()
+    m.add_map_post(_item(1, MapData=_cells((1, 1, 10)), CleanTime=3000))
+    m.add_road_post(_item(1, RoadData=_road((0, 0), (0, 5)), CleanTime=3000))
+    m.add_map_post(_item(2, MapData=_cells((2, 2, 10)), CleanTime=3004))  # same clean
+    assert len(m.cells) == 2
+    m.add_map_post(_item(3, MapData=_cells((9, 9, 10)), CleanTime=72))     # next day
+    assert m.cells == {(-9, -9): 10} and m.paths == []
+    m.add_road_post(_item(3, RoadData=_road((9, 9), (9, 8)), CleanTime=72))
+    assert len(m.paths) == 1  # same CleanTime: not another reset
+
+
+def test_current_clean_keeps_only_the_latest():
+    items = [_item(t, CleanTime=ct) for t, ct in
+             [(1, 0), (2, 4), (3, 4000), (4, 72), (5, 76), (6, 80)]]
+    assert [i["timestamp"] for i in w450.current_clean(items)] == [4, 5, 6]
+    assert w450.current_clean(items[:3]) == items[:3]
+    assert w450.current_clean([]) == []

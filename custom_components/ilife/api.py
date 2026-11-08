@@ -432,9 +432,11 @@ class ILifeDevice:
         self.prop_times = times
         return out
 
-    def property_timeline(self, identifier, start, end, ordered=True, max_pages=50):
+    def property_timeline(self, identifier, start, end, ordered=True, max_pages=50, stop=None):
         """Every post of one property between start and end (ms), oldest first.
-        /thing/property/timeline/get, paged by 200 like the app's GetHistoryMapDelegate."""
+        /thing/property/timeline/get, paged by 200 like the app's GetHistoryMapDelegate.
+        stop(items so far, oldest first) -> True ends the paging early (newest-first
+        reads use it to stop once they reach what they need)."""
         items = []
         for _ in range(max_pages):
             r = self._iot("/thing/property/timeline/get",
@@ -446,6 +448,8 @@ class ILifeDevice:
             page = (r.get("data") or {}).get("items") or []
             items.extend(page)
             if len(page) < 200:
+                break
+            if stop is not None and stop(sorted(items, key=lambda i: int(i.get("timestamp") or 0))):
                 break
             stamps = [int(i.get("timestamp") or 0) for i in page]
             if ordered:
