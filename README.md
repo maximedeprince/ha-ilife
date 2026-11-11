@@ -348,7 +348,8 @@ depend on the brand:
 | Protocol | App `mapType` | Models | Map |
 |---|---|---|---|
 | `slam_x9` | 3 | ILIFE A10 / A10s / A10 White / L100, X900 / X910, ZACO A10, AVA PRO MAX | saved map with rooms, room / zone clean, go to point |
-| `realtime` | 1, 2, 4 | V3x, V5x, A4s Pro, A8 / A80, A9 / A9s, B5 Max, W400 / W450… | live cleaning map, as before |
+| `w450` | 4 | W400 / W450 / W455, ZACO W450 | the whole current clean, path and dock, drawn as the app does; history thumbnails |
+| `realtime` | 1, 2 | V3x, V5x, A4s Pro, A8 / A80, A9 / A9s, B5 Max… | live cleaning map, as before |
 
 A model missing from the table is classified from the properties it reports.
 
@@ -404,6 +405,14 @@ against the saved map of an ILIFE L100 (the diagnostics file of
 three rooms. A model without a saved map shows its last clean's live map, as
 before. ILIFE A10 / L100 owners, please report how the commands go. Not available yet: virtual walls and
 no-go zones, and switching between saved maps (the app's selected map is used).
+
+On the **W450 family** (floor washers), polling only ever sees a few of the robot's
+map posts, so the map is rebuilt, as the app does, from the cloud's history of the
+current clean's posts (`RealTimeMap` and `RealMapRoadData`): read once when a clean
+starts, then only the new posts while the robot is out, and nothing while it is docked
+apart from a check every 30 minutes. The camera keeps the last clean once the robot is
+back, and the cleaning history shows each clean's map. Contributed and checked on a
+real W450 by [@p1ne](https://github.com/p1ne) ([#40](https://github.com/maximedeprince/ha-ilife/pull/40)).
 
 ## Rooms, programs and schedules (ILIFE Clean)
 
