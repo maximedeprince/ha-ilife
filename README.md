@@ -461,6 +461,13 @@ what lets me add support. For a **blank or wrong map**, the diagnostics file is
 the key: it lists the map fields your model actually reports, with their sizes
 and headers, and what the decoder made of them.
 
+Some robots shown in ILIFE Home, and other brands' apps, are on **3irobotix's own
+AIoT cloud** rather than on Alibaba's or Tuya's (the ILIFE T60s, the 3i P10 Ultra:
+[#26](https://github.com/maximedeprince/ha-ilife/issues/26),
+[#37](https://github.com/maximedeprince/ha-ilife/issues/37)). That cloud is not
+supported yet. [`tools/aiot_probe.py`](tools/aiot_probe.py) logs in to it from your
+own account and lists what a backend would need, masking everything private.
+
 ## Troubleshooting — debug logs
 
 Add this to `configuration.yaml`, restart, reproduce the issue, then copy the
