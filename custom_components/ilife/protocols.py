@@ -362,6 +362,9 @@ class W450Protocol(MapProtocol):
         from .map_w450 import W450Map
 
         self.map = W450Map()
+        # What the camera draws and the attributes read: replaced after each update,
+        # never changed in place, since the image is drawn in the executor meanwhile.
+        self._view = W450Map()
         self.charger = None
         self._session: Any = None
         self._map_ts = 0
@@ -382,7 +385,8 @@ class W450Protocol(MapProtocol):
         session = (state.get("RealTimeMapStart"), map_start)
         active = state.get("WorkMode") not in self._QUIET_MODES
         now = _time.time()
-        if session != self._session:
+        reset = session != self._session
+        if reset:
             # new clean (or first poll): rebuild the whole map, as the app does on open
             self.map.reset()
             self._map_ts = map_start - 1 if map_start else int(now * 1000) - 86_400_000
@@ -399,7 +403,7 @@ class W450Protocol(MapProtocol):
             maps = await hass.async_add_executor_job(
                 functools.partial(self.api.property_timeline, "RealTimeMap", self._map_ts + 1,
                                   end, ordered=False, stop=_reached_clean_start))
-            maps = current_clean(maps)
+            maps = await hass.async_add_executor_job(current_clean, maps)
             if maps:
                 first = int(maps[0].get("timestamp") or 0)
                 self._road_ts = max(self._road_ts, first - 1)
@@ -408,22 +412,30 @@ class W450Protocol(MapProtocol):
                 self.api.property_timeline, "RealTimeMap", self._map_ts + 1, end)
         roads = await hass.async_add_executor_job(
             self.api.property_timeline, "RealMapRoadData", self._road_ts + 1, end)
-        # one stream, in time order: a CleanTime drop in either resets the map
+        if maps or roads or reset:
+            # a whole clean's posts are real work to decode: not in the event loop
+            self._map_ts, self._road_ts, self._view = await hass.async_add_executor_job(
+                self._apply, maps, roads)
+            self._version += 1
+
+    def _apply(self, maps: list, roads: list) -> tuple[int, int, Any]:
+        """Add new posts of both properties in time order (executor). Returns the
+        newest timestamp of each and a copy of the map to draw."""
         merged = sorted([(int(i.get("timestamp") or 0), 0, i) for i in maps]
                         + [(int(i.get("timestamp") or 0), 1, i) for i in roads],
                         key=lambda e: (e[0], e[1]))
+        map_ts, road_ts = self._map_ts, self._road_ts
         for ts, kind, item in merged:
             if kind == 0:
                 self.map.add_map_post(item)
-                self._map_ts = max(self._map_ts, ts)
+                map_ts = max(map_ts, ts)
             else:
                 self.map.add_road_post(item)
-                self._road_ts = max(self._road_ts, ts)
-        if merged:
-            self._version += 1
+                road_ts = max(road_ts, ts)
+        return map_ts, road_ts, self.map.copy()
 
     def has_map(self, state: dict) -> bool:
-        return not self.map.empty()
+        return not self._view.empty()
 
     def render_key(self, state: dict):
         return (self._version, self.charger)
@@ -431,7 +443,7 @@ class W450Protocol(MapProtocol):
     def render(self, state: dict) -> bytes | None:
         from .map_w450 import render_png
 
-        return render_png(self.map, self.charger)
+        return render_png(self._view, self.charger)
 
     def camera_attributes(self) -> dict | None:
         # The camera keeps the whole last clean (rebuilt from the timeline), which is
@@ -439,7 +451,8 @@ class W450Protocol(MapProtocol):
         # showing it when the robot is docked, and suit xiaomi-vacuum-map-card.
         from .map_w450 import calibration
 
-        cal = calibration(self.map, self.charger) if not self.map.empty() else None
+        view = self._view
+        cal = calibration(view, self.charger) if not view.empty() else None
         return {"calibration_points": cal} if cal else None
 
     @staticmethod
@@ -447,14 +460,19 @@ class W450Protocol(MapProtocol):
         """CleanHistory packs -> CleanMapData the card and gallery can draw."""
         from .map_w450 import decode_history, to_clean_map
 
-        return to_clean_map(decode_history(packs)[0])
+        try:
+            return to_clean_map(decode_history(packs)[0])
+        except Exception:  # noqa: BLE001 — one unreadable clean, not the whole history
+            _LOGGER.debug("ILIFE W450 history map unreadable", exc_info=True)
+            return None
 
     def diagnostics(self) -> dict:
+        view = self._view
         types: dict[int, int] = {}
-        for t in self.map.cells.values():
+        for t in view.cells.values():
             types[t] = types.get(t, 0) + 1
-        return {"key": self.key, "cells": len(self.map.cells), "cell_types": types,
-                "path_segments": len(self.map.paths)}
+        return {"key": self.key, "cells": len(view.cells), "cell_types": types,
+                "path_segments": len(view.paths)}
 
 
 def product(device: dict) -> tuple[str, str, int] | None:

@@ -73,28 +73,42 @@ class W450Map:
     def __init__(self) -> None:
         self.cells: dict[tuple[int, int], int] = {}
         self.paths: list[list[tuple[int, int]]] = []
-        self._clean_time: int | None = None
+        # last CleanTime per property: each one counts up within a clean
+        self._clean_time: dict[str, int] = {}
 
     def reset(self) -> None:
         self.cells.clear()
         self.paths.clear()
-        self._clean_time = None
+        self._clean_time.clear()
 
-    def _new_clean(self, post: dict) -> None:
+    def copy(self) -> "W450Map":
+        """A copy to render from while this one keeps taking posts (sub-paths are never
+        changed once added, so they are shared)."""
+        m = W450Map()
+        m.cells = dict(self.cells)
+        m.paths = list(self.paths)
+        return m
+
+    def _new_clean(self, post: dict, stream: str) -> None:
         """Posts carry CleanTime (s since the clean started; it keeps counting through
         a pause). When it goes back, a new clean has started — RealTimeMapStart is not
-        always re-reported then — so the previous clean's map must go."""
+        always re-reported then — so the previous clean's map must go.
+
+        Compared within one property only: a RealMapRoadData post stamped just after a
+        RealTimeMap post may carry a CleanTime a second older, and that is no new clean."""
         ct = post.get("CleanTime")
         if not isinstance(ct, int) or isinstance(ct, bool):
             return
-        if self._clean_time is not None and ct < self._clean_time:
+        prev = self._clean_time.get(stream)
+        if prev is not None and ct < prev:
             self.cells.clear()
             self.paths.clear()
-        self._clean_time = ct
+            self._clean_time.clear()  # the other property starts over with this clean
+        self._clean_time[stream] = ct
 
     def add_map_post(self, post: Any) -> None:
         post = _post(post)
-        self._new_clean(post)
+        self._new_clean(post, "map")
         raw = _b64(post.get("MapData"))
         for i in range(0, len(raw) - len(raw) % 5, 5):
             a, b = struct.unpack(">hh", raw[i:i + 4])
@@ -108,7 +122,7 @@ class W450Map:
 
     def add_road_post(self, post: Any) -> None:
         post = _post(post)
-        self._new_clean(post)
+        self._new_clean(post, "road")
         raw = _b64(post.get("RoadData"))
         cur: list[tuple[int, int]] = []
         for i in range(0, len(raw) - len(raw) % 4, 4):
@@ -163,9 +177,14 @@ def charger_point(value: Any) -> tuple[int, int] | None:
     return unpack_point(v.get("Piont"))
 
 
+MAX_SIDE = 2400  # px: a map wider than this at 1 px a cell is a stray point, not a home
+_MAX_SUPERSAMPLED = 3000  # px: side of the supersampled canvas render_png draws on
+
+
 def geometry(m: W450Map, charger: tuple[int, int] | None = None,
              max_px: int = 720) -> tuple[int, int, int, int, int] | None:
-    """(minx, miny, cols, rows, cell px) of the rendered image, or None when empty."""
+    """(minx, miny, cols, rows, cell px) of the rendered image, or None when there is
+    nothing (sensible) to draw."""
     pts = list(m.cells) + [p for path in m.paths for p in path]
     if charger:
         pts.append(charger)
@@ -176,7 +195,12 @@ def geometry(m: W450Map, charger: tuple[int, int] | None = None,
     miny = min(p[1] for p in pts) - margin
     cols = max(p[0] for p in pts) - minx + 1 + margin
     rows = max(p[1] for p in pts) - miny + 1 + margin
-    cell = max(4, min(40, max_px // max(cols, rows)))
+    span = max(cols, rows)
+    cell = max(4, min(40, max_px // span))
+    if span * cell > MAX_SIDE:
+        cell = MAX_SIDE // span
+        if cell < 1:
+            return None
     return minx, miny, cols, rows, cell
 
 
@@ -204,7 +228,8 @@ def render_png(m: W450Map, charger: tuple[int, int] | None = None,
     if g is None:
         return None
     minx, miny, cols, rows, cell = g
-    ss = 3  # supersampling for smooth path / markers
+    # supersampling for smooth path / markers, within a bounded canvas
+    ss = max(1, min(3, _MAX_SUPERSAMPLED // (max(cols, rows) * cell)))
     cs = cell * ss
     img = Image.new("RGBA", (cols * cs, rows * cs), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)

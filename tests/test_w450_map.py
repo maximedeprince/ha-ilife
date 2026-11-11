@@ -164,3 +164,43 @@ def test_current_clean_keeps_only_the_latest():
     assert [i["timestamp"] for i in w450.current_clean(items)] == [4, 5, 6]
     assert w450.current_clean(items[:3]) == items[:3]
     assert w450.current_clean([]) == []
+
+
+def test_an_older_cleantime_in_the_other_property_is_no_new_clean():
+    # RealMapRoadData stamped just after RealTimeMap, but a second older: same clean
+    m = w450.W450Map()
+    m.add_map_post(_item(1, MapData=_cells((1, 1, 10)), CleanTime=100))
+    m.add_road_post(_item(2, RoadData=_road((0, 0), (0, 5)), CleanTime=99))
+    m.add_map_post(_item(3, MapData=_cells((2, 2, 10)), CleanTime=104))
+    assert len(m.cells) == 2 and len(m.paths) == 1
+    # a drop within one property still starts a new clean, for both
+    m.add_road_post(_item(4, RoadData=_road((5, 5), (6, 5)), CleanTime=3))
+    assert m.cells == {} and m.paths == [[(-5, -5), (-5, -6)]]
+    m.add_map_post(_item(5, MapData=_cells((3, 3, 10)), CleanTime=4))
+    assert m.cells == {(-3, -3): 10}
+
+
+def test_copy_is_not_touched_by_later_posts():
+    m = w450.W450Map()
+    m.add_map_post({"MapData": _cells((1, 1, 10))})
+    m.add_road_post({"RoadData": _road((0, 0), (0, 5))})
+    view = m.copy()
+    m.add_map_post({"MapData": _cells((2, 2, 2))})
+    m.add_road_post({"RoadData": _road((1, 1), (1, 2))})
+    m.reset()
+    assert view.cells == {(-1, -1): 10} and view.paths == [[(0, 0), (-5, 0)]]
+
+
+def test_image_size_is_bounded():
+    from PIL import Image
+    import io
+
+    # a long but real span: drawn smaller rather than at 4 px a cell
+    m = w450.W450Map()
+    m.add_map_post({"MapData": _cells((0, 0, 10), (900, 0, 10))})
+    img = Image.open(io.BytesIO(w450.render_png(m)))
+    assert max(img.size) <= w450.MAX_SIDE
+    # one stray record 20000 cells away: nothing sensible to draw, and no huge canvas
+    m.add_map_post({"MapData": _cells((20000, -20000, 2))})
+    assert w450.geometry(m) is None
+    assert w450.render_png(m) is None and w450.calibration(m) is None
