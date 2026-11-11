@@ -218,6 +218,8 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
         self.model: dict[str, dict] = {}
         self.properties: dict[str, Any] = {}
         self.room_names: dict[int, str] = {}
+        # Rooms of the newest map ({room id: name as drawn}), set by the map camera.
+        self.map_rooms: dict[int, str] = {}
         self._properties_next = 0.0
         # Cleaning history: one stored map per clean (A30 Pro), newest first, in the
         # card's "cleans" shape; start, area and duration come from each record.
@@ -232,6 +234,17 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
     @property
     def supports_room_clean(self) -> bool:
         return CLEAN_ROOMS_CODE in self.properties
+
+    @property
+    def rooms(self) -> dict[int, str]:
+        """{room id: name} of the rooms this vacuum can be sent to. Names come from the
+        app's MapRoomInfo DPs, which stay empty until a room is renamed there (#41); the
+        rooms of the newest map fill in, under the names the app shows for them
+        ("Room 1"...). Only on a model that cleans by room: elsewhere they would be
+        buttons that do nothing."""
+        if not self.supports_room_clean:
+            return dict(self.room_names)
+        return {**self.map_rooms, **self.room_names}
 
     @property
     def schedules(self) -> dict[int, dict]:

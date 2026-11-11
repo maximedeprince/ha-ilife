@@ -381,6 +381,12 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
             "map_fetched_at": int(time.time()),
             "map_payload_sha256": render_key[0],
         }
+        # The map is where a robot whose rooms were never renamed in the app keeps its
+        # rooms (#41): hand them to the vacuum, for room cleaning and the card's chips.
+        rooms = {int(k): str(v) for k, v in (self._render_metadata.get("rooms") or {}).items()}
+        if rooms and rooms != getattr(self.coordinator, "map_rooms", None):
+            self.coordinator.map_rooms = rooms
+            self.coordinator.async_update_listeners()
         if self._failures:
             _LOGGER.info("ILIFE Clean map recovered for %s", self.api.device_id)
         self._failures = 0

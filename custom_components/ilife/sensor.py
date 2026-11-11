@@ -254,7 +254,7 @@ class TuyaScheduleSensor(TuyaEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        names = self.coordinator.room_names
+        names = self.coordinator.rooms
         return {"schedules": [
             {**schedule, "slot": slot,
              "room_names": [names.get(room, f"Room {room + 1}") for room in schedule["rooms"]]}

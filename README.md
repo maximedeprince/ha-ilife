@@ -423,7 +423,9 @@ log; other models get the features only if they report the same data points.
 
 - **Room names** come from the app (`MapRoomInfo…`): the map, the card and the
   vacuum's `rooms` attribute use them. Renaming a room in the app shows up within
-  five minutes.
+  five minutes. Until a room is renamed, the app reports no names at all: the rooms
+  then come from the map, as the app numbers them (`Room 1`, `Room 2`…; `"Room1"`,
+  as the app writes it, works too).
 - **Cleaning selected rooms** — the card's *Rooms* chips, or:
 
   ```yaml
