@@ -550,21 +550,29 @@ class TuyaVacuum(TuyaEntity, StateVacuumEntity):
     @property
     def extra_state_attributes(self):
         attrs = self._tuya_attributes()
-        if self.coordinator.room_names:
-            attrs["rooms"] = self.coordinator.room_names
+        rooms = self.coordinator.rooms
+        if rooms:
+            attrs["rooms"] = rooms
         return attrs
 
     def _room_id(self, room) -> int:
-        """A room given by id or by its name in the app (case-insensitive)."""
-        names = self.coordinator.room_names
+        """A room given by id or by its name in the app: case-insensitive, and spaces
+        aside when that is unambiguous (the app writes "Room1" where the map, and
+        this integration, say "Room 1")."""
+        names = self.coordinator.rooms
         if isinstance(room, int) or str(room).strip().isdigit():
             return int(room)
         wanted = str(room).strip().casefold()
-        for room_id, name in names.items():
-            if name.casefold() == wanted:
-                return room_id
+        hits = [room_id for room_id, name in names.items() if name.casefold() == wanted]
+        if not hits:
+            squeezed = "".join(wanted.split())
+            hits = [room_id for room_id, name in names.items()
+                    if "".join(name.casefold().split()) == squeezed]
+        if len(hits) == 1:
+            return hits[0]
         raise HomeAssistantError(
-            translation_domain=DOMAIN, translation_key="room_unknown",
+            translation_domain=DOMAIN,
+            translation_key="room_ambiguous" if hits else "room_unknown",
             translation_placeholders={
                 "room": str(room),
                 "rooms": ", ".join(f"{name} ({room_id})" for room_id, name in

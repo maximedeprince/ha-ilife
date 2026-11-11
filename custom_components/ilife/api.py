@@ -411,6 +411,7 @@ class ILifeDevice:
         self.account = account
         self.device = device
         self.iot_id = device["iotId"]
+        self.prop_times: dict = {}
 
     def _iot(self, path, d, api_ver="1.0.2"):
         return self.account._iot(path, d, api_ver)
@@ -422,9 +423,43 @@ class ILifeDevice:
             _LOGGER.debug("ILIFE get_state failed: %s", r)
             raise ILifeError(f"get_state failed (code {r.get('code')})")
         out = {}
+        times = {}
         for k, v in (r.get("data") or {}).items():
             out[k] = v.get("value") if isinstance(v, dict) else v
+            if isinstance(v, dict) and v.get("time"):
+                times[k] = v["time"]
+        # report time (ms) of each property: W450 map history starts at RealTimeMapStart's
+        self.prop_times = times
         return out
+
+    def property_timeline(self, identifier, start, end, ordered=True, max_pages=50, stop=None):
+        """Every post of one property between start and end (ms), oldest first.
+        /thing/property/timeline/get, paged by 200 like the app's GetHistoryMapDelegate.
+        stop(items so far, oldest first) -> True ends the paging early (newest-first
+        reads use it to stop once they reach what they need)."""
+        items = []
+        for _ in range(max_pages):
+            r = self._iot("/thing/property/timeline/get",
+                          {"iotId": self.iot_id, "identifier": identifier, "start": int(start),
+                           "end": int(end), "pageSize": 200, "ordered": ordered})
+            if r.get("code") != 200:
+                _LOGGER.debug("ILIFE timeline %s failed: %s", identifier, r)
+                raise ILifeError(f"timeline {identifier} failed (code {r.get('code')})")
+            page = (r.get("data") or {}).get("items") or []
+            items.extend(page)
+            if len(page) < 200:
+                break
+            if stop is not None and stop(sorted(items, key=lambda i: int(i.get("timestamp") or 0))):
+                break
+            stamps = [int(i.get("timestamp") or 0) for i in page]
+            if ordered:
+                start = max(stamps) + 1
+            else:
+                end = min(stamps) - 1
+            if start >= end:
+                break
+        items.sort(key=lambda i: int(i.get("timestamp") or 0))
+        return items
 
     def set_prop(self, name, value, tag=None, key=True):
         d = {"iotId": self.iot_id, "items": {name: value}}
@@ -451,7 +486,7 @@ class ILifeDevice:
             raise ILifeError(f"set schedule failed (code {r.get('code')})")
         return True
 
-    def clean_history(self, limit=20):
+    def clean_history(self, limit=20, assemble=None):
         """Cleaning history via the timeline endpoint (apiVer 1.0.0).
         Each clean's map is tiled into PackNum packs (PackId=1..N); we group by StartTime,
         collect the packs and stack them into one complete map. Recent first."""
@@ -487,7 +522,9 @@ class ILifeDevice:
         for start in sorted(groups, key=lambda s: s or 0, reverse=True)[:limit]:
             g = groups[start]
             out.append({"start": g["start"], "area": g["area"], "duration": g["duration"],
-                        "reason": g["reason"], "map": _assemble_maps(g["packs"])})
+                        "reason": g["reason"],
+                        # model-specific pack format (W450: protocols.W450Protocol)
+                        "map": (assemble or _assemble_maps)(g["packs"])})
         return out
 
     def is_online(self):
