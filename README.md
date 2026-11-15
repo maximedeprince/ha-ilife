@@ -349,7 +349,8 @@ depend on the brand:
 |---|---|---|---|
 | `slam_x9` | 3 | ILIFE A10 / A10s / A10 White / L100, X900 / X910, ZACO A10, AVA PRO MAX | saved map with rooms, room / zone clean, go to point |
 | `w450` | 4 | W400 / W450 / W455, ZACO W450 | the whole current clean, path and dock, drawn as the app does; history thumbnails |
-| `realtime` | 1, 2 | V3x, V5x, A4s Pro, A8 / A80, A9 / A9s, B5 Max… | live cleaning map, as before |
+| `x801` | 2 | A9s Pro, ZACO A9s Pro, X801 | the whole current / last clean (cleaned area, obstacles, robot and dock), kept once docked |
+| `realtime` | 1 | V3x, V5x, A4s Pro, A8 / A80, A9 / A9s, B5 Max… | live cleaning map, as before |
 
 A model missing from the table is classified from the properties it reports.
 
