@@ -7,8 +7,9 @@ config's `mapType` per productKey (RobotFragment): 1 = gyro / real-time map, 2 =
 built on the ILIFE app (ILIFE, ZACO, AVA...), so an ILIFE A10 and an AVA PRO MAX speak
 the same protocol.
 
-mapType 3 (SlamX9Protocol) and 4 (W450Protocol) have dedicated implementations; everything else keeps the real-time map
-behaviour the integration always had. A device whose productKey is unknown is classified
+mapType 2 (X801Protocol), 3 (SlamX9Protocol) and 4 (W450Protocol) have dedicated
+implementations; everything else keeps the real-time map behaviour the integration
+always had. A device whose productKey is unknown is classified
 from the properties it reports.
 """
 from __future__ import annotations
@@ -21,7 +22,7 @@ from typing import Any
 from homeassistant.exceptions import HomeAssistantError
 
 from .api import ILifeError
-from .const import CLEANING_MODES, DOMAIN, PAUSED_MODES
+from .const import CLEANING_MODES, DOCKED_MODES, DOMAIN, PAUSED_MODES, RETURNING_MODES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,6 +172,153 @@ class RealTimeMapProtocol(MapProtocol):
 
     def diagnostics(self) -> dict:
         return {"key": self.key, "live_cells": len(self._cells)}
+
+
+class X801Protocol(MapProtocol):
+    """X801 family (mapType 2): A9s Pro, ZACO A9s Pro, X801.
+
+    RealTimeMap.MapData holds the same 5-byte cell records as on the gyro models, but:
+
+    * a post carries only the cells that changed, and a 30 s poll sees a fraction of
+      the posts. As for the W450, the map is therefore the union of every RealTimeMap
+      post since RealTimeMapStart, read from the property timeline. It stays once the
+      robot is docked and is rebuilt after a restart of Home Assistant;
+    * the cell types differ. On a ZACO A9s Pro (a 26.6 m² clean: 2605 cells of type 4,
+      1283 of type 2, 397 of type 5, 3 of type 3): 4 is the robot's track, one cell
+      (10 cm) wide — their count is the cleaned area in 0.01 m² —, 2 outlines what
+      was cleaned (walls, furniture). 5 lies along that outline and is drawn apart;
+      what it means exactly is not known;
+    * the dock is ChargerPoint {"Piont": packed, "DisplaySwitch": 0/1}.
+    """
+
+    key = "x801"
+    TRACK = 4
+    OBSTACLE = 2
+    C_OBSTACLE = (0x75, 0x76, 0x7A, 255)  # readable on a dark dashboard too
+    C_OTHER = (0xFB, 0xA8, 0x3C, 255)
+
+    def __init__(self, api) -> None:
+        super().__init__(api)
+        self._cells: dict[tuple[int, int], int] = {}
+        # what the camera draws: replaced as a whole, never changed in place, since
+        # the image is drawn in the executor meanwhile
+        self._view: dict[tuple[int, int], int] = {}
+        self._session: Any = None
+        self._clean_time: int | None = None
+        self._ts = 0
+        self._pending = False
+        self._was_active = False
+        self._was_docked = False
+        self._posts = 0
+        self._version = 0
+        self.robot: tuple[int, int] | None = None
+        self.charger: tuple[int, int] | None = None
+
+    def _restart(self, since_ms: int) -> None:
+        self._cells = {}
+        self._clean_time = None
+        self._posts = 0
+        self._ts = since_ms - 1
+        self._pending = True
+
+    async def async_update(self, hass, state: dict) -> None:
+        import time as _time
+
+        from .map import unpack_point
+
+        rtm = state.get("RealTimeMap")
+        rtm = rtm if isinstance(rtm, dict) else {}
+        mode = state.get("WorkMode")
+        cleaning = mode in CLEANING_MODES
+        active = cleaning or mode in RETURNING_MODES
+        now_ms = int(_time.time() * 1000)
+
+        session = state.get("RealTimeMapStart")
+        if session != self._session:
+            # new clean, or first poll: the whole map, from where this clean began
+            self._session = session
+            start = int((getattr(self.api, "prop_times", {}) or {}).get("RealTimeMapStart") or 0)
+            self._restart(start or now_ms - 86_400_000)
+        elif cleaning and self._was_docked:
+            # a clean whose RealTimeMapStart was not (yet) re-reported
+            self._restart(now_ms - 60_000)
+        if mode in DOCKED_MODES:
+            self._was_docked = True
+        elif cleaning:
+            self._was_docked = False
+
+        before = (len(self._cells), self._posts)
+        if active or self._was_active or self._pending:
+            try:
+                items = await hass.async_add_executor_job(
+                    self.api.property_timeline, "RealTimeMap", self._ts + 1, now_ms + 60_000)
+            except ILifeError:
+                _LOGGER.debug("ILIFE X801 map timeline unavailable", exc_info=True)
+            else:
+                self._pending = False
+                # a whole clean's posts are real work to decode: not in the event loop
+                await hass.async_add_executor_job(self._apply, items)
+        self._was_active = active
+        if cleaning and rtm.get("MapData"):
+            # the polled post too, should the timeline lag or fail — unless it is
+            # older than what the timeline gave, which would read as a new clean
+            ct = rtm.get("CleanTime")
+            if self._clean_time is None or not isinstance(ct, int) or ct >= self._clean_time:
+                self._add(rtm)
+        if (len(self._cells), self._posts) != before or (not self._cells and self._view):
+            self._view = dict(self._cells)
+            self._version += 1
+
+        self.robot = unpack_point(rtm.get("CurrentPiont"))
+        charger = state.get("ChargerPoint")
+        charger = charger if isinstance(charger, dict) else {}
+        self.charger = (None if charger.get("DisplaySwitch") == 0
+                        else unpack_point(charger.get("Piont")))
+
+    def _add(self, post: dict) -> None:
+        from .map import decode_cells
+
+        # CleanTime (s since the clean started) going back means a new clean has
+        # started: RealTimeMapStart is not always re-reported then (see W450Protocol)
+        ct = post.get("CleanTime")
+        if isinstance(ct, int) and not isinstance(ct, bool):
+            if self._clean_time is not None and ct < self._clean_time:
+                self._cells = {}
+            self._clean_time = ct
+        for x, y, t in decode_cells(post.get("MapData")):
+            self._cells[(x, y)] = t
+
+    def _apply(self, items: list) -> None:
+        """Add timeline posts, oldest first (executor)."""
+        from .map_w450 import _post
+
+        for item in items:
+            self._ts = max(self._ts, int(item.get("timestamp") or 0))
+            self._add(_post(item))
+        self._posts += len(items)
+
+    def has_map(self, state: dict) -> bool:
+        return bool(self._view)
+
+    def render_key(self, state: dict):
+        return (self._version, self.robot, self.charger)
+
+    def render(self, state: dict) -> bytes | None:
+        from .map import FLOOR, WALL, render_cells_png
+
+        # to the types map.py draws; an unknown type keeps a value of its own
+        to = {self.TRACK: FLOOR, self.OBSTACLE: WALL, WALL: 255}
+        cells = [(x, y, to.get(t, t)) for (x, y), t in self._view.items()]
+        # the robot is about three cells wide: its track is widened by one on each side
+        return render_cells_png(cells, self.robot, self.charger, wall=self.C_OBSTACLE,
+                                other=self.C_OTHER, floor_pad=1)
+
+    def diagnostics(self) -> dict:
+        types: dict[int, int] = {}
+        for t in self._view.values():
+            types[t] = types.get(t, 0) + 1
+        return {"key": self.key, "cells": len(self._view), "cell_types": types,
+                "timeline_posts": self._posts}
 
 
 class SlamX9Protocol(MapProtocol):
@@ -483,7 +631,8 @@ def detect(device: dict, state: dict | None) -> type[MapProtocol]:
     """Known productKey -> its mapType; unknown -> from the reported properties."""
     p = product(device)
     if p is not None:
-        return {3: SlamX9Protocol, 4: W450Protocol}.get(p[2], RealTimeMapProtocol)
+        return {2: X801Protocol, 3: SlamX9Protocol, 4: W450Protocol}.get(
+            p[2], RealTimeMapProtocol)
     if state and any(k in state for k in _SLAM_PROPS):
         return SlamX9Protocol
     return RealTimeMapProtocol
