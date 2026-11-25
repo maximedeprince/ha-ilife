@@ -39,6 +39,7 @@ import base64
 import io
 import struct
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 
 from .tuya_lz4 import LZ4BlockError, decompress_block
@@ -531,18 +532,24 @@ def render_tuya_map_png(
     scale: int = 6,
     *,
     include_path: bool = True,
-    room_names: dict[int, str] | None = None,
+    room_names: dict[int, str] | Callable[[list[int]], dict[int, str]] | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     """Render a map to PNG and return compact camera metadata (never the map body).
 
-    `room_names` ({room id: name}) replaces the names in the file, which the A30
-    Pro leaves empty; the app keeps them in separate DPs (see tuya_rooms).
+    `room_names` ({room id: name}, or a callable taking the decoded room ids)
+    replaces the names in the file, which the A30 Pro leaves empty; the app
+    keeps them in separate DPs (see tuya_rooms).
     """
     from PIL import Image, ImageDraw
 
     decoded = decode_tuya_map(layout, path_file, include_path=include_path)
+    resolved = (
+        room_names([room["room_id"] for room in decoded["rooms"]])
+        if callable(room_names)
+        else (room_names or {})
+    )
     for room in decoded["rooms"]:
-        room["name"] = (room_names or {}).get(room["room_id"], room["name"])
+        room["name"] = resolved.get(room["room_id"], room["name"])
     header = decoded["header"]
     width, height = header["width"], header["height"]
     scale = max(1, min(scale, MAX_IMAGE_SIDE // max(width, height, 1)))

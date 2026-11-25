@@ -48,6 +48,68 @@ class TestRoomNames:
     def test_garbage_is_ignored(self):
         assert tuya_rooms.parse_room_names({"MapRoomInfo1": "!!!not base64"}) == {}
 
+    def test_separate_saved_maps_are_not_joined_together(self):
+        """#44: a second saved map in MapRoomInfo2 used to get glued onto the last
+        room name of MapRoomInfo1 ("Kuchnia1794402708") and shift every following pair."""
+        properties = {
+            "MapRoomInfo1": _b64(
+                "1790000000,Floor 1,4,Salon,0,Korytarz,1,Sypialnia,2,Biuro,3,Kuchnia"
+            ),
+            "MapRoomInfo2": _b64(
+                "1794402708,Floor 2,0,Korytarz,1,Sypialnia,3,Biuro,4,Salon,5,Kuchnia"
+            ),
+        }
+        # Without CleanSettings or map_room_ids: newest map timestamp wins
+        assert tuya_rooms.parse_room_names(properties) == {
+            0: "Korytarz", 1: "Sypialnia", 3: "Biuro", 4: "Salon", 5: "Kuchnia",
+        }
+        # Matching against the map's segment ids picks the matching map
+        assert tuya_rooms.parse_room_names(properties, map_room_ids=[0, 1, 3, 4, 5]) == {
+            0: "Korytarz", 1: "Sypialnia", 3: "Biuro", 4: "Salon", 5: "Kuchnia",
+        }
+        assert tuya_rooms.parse_room_names(properties, map_room_ids=[0, 1, 2, 3, 4]) == {
+            0: "Korytarz", 1: "Sypialnia", 2: "Biuro", 3: "Kuchnia", 4: "Salon",
+        }
+
+    def test_clean_settings_selects_active_map_even_when_older(self):
+        """When two floors share the same room ids, CleanSettings' leading timestamp
+        identifies which saved map is active."""
+        settings_for_1762447000 = TestPrograms.STANDARD
+        properties = {
+            "MapRoomInfo1": _b64("1762447000,Downstairs,0,Kitchen,1,Hall"),
+            "MapRoomInfo2": _b64("1794402708,Upstairs,0,Bedroom,1,Bath"),
+            "CleanSettings": settings_for_1762447000,
+        }
+        assert tuya_rooms.active_map_id(settings_for_1762447000) == 1762447000
+        assert tuya_rooms.parse_room_names(properties, map_room_ids=[0, 1]) == {
+            0: "Kitchen", 1: "Hall",
+        }
+
+    def test_clean_settings_matching_an_unnamed_map_does_not_steal_other_names(self):
+        properties = {
+            "MapRoomInfo1": _b64("1700000000,Old,0,Kitchen,1,Hall"),
+            "MapRoomInfo2": _b64("1762447000,Unnamed"),
+            "CleanSettings": TestPrograms.STANDARD,
+        }
+        assert tuya_rooms.parse_room_names(properties, map_room_ids=[0, 1]) == {}
+
+    def test_stale_clean_settings_yields_to_matching_map_segments(self):
+        properties = {
+            "MapRoomInfo1": _b64("1762447000,Old,0,Korytarz,1,Sypialnia,2,Biuro,3,Kuchnia,4,Salon"),
+            "MapRoomInfo2": _b64("1794402708,New,0,Korytarz,1,Sypialnia,3,Biuro,4,Salon,5,Kuchnia"),
+            "CleanSettings": TestPrograms.STANDARD,  # still points at 1762447000
+        }
+        assert tuya_rooms.parse_room_names(properties, map_room_ids=[0, 1, 3, 4, 5]) == {
+            0: "Korytarz", 1: "Sypialnia", 3: "Biuro", 4: "Salon", 5: "Kuchnia",
+        }
+
+    def test_corrupt_slot_does_not_drop_valid_maps(self):
+        properties = {
+            "MapRoomInfo1": "!!!not base64",
+            "MapRoomInfo2": _b64("1794402708,Home,0,Kitchen"),
+        }
+        assert tuya_rooms.parse_room_names(properties) == {0: "Kitchen"}
+
 
 class TestPrograms:
     # CleanSettings as the app wrote it when switching program (A30 Pro device log).

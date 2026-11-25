@@ -24,6 +24,7 @@ from .tuya_api import TuyaError, TuyaQuotaError
 from .tuya_entity import tuya_device_info
 from .tuya_dynamic import enum_command
 from .tuya_map import render_tuya_map_png
+from .tuya_rooms import CLEAN_SETTINGS_CODE, ROOM_INFO_CODES, parse_room_names
 from .tuya_polling import (
     MAP_ACTIVE_INTERVAL,
     MAP_AFTER_RUN,
@@ -129,6 +130,7 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
         self._cache_time = 0.0
         self._render_key = None
         self._render_metadata = {}
+        self._base_map_rooms: dict[int, str] = {}
         # Newest stored map ({"record": ..., "layout": bytes}), kept so it is only
         # downloaded again when Tuya lists a newer one, and so a run in progress on a
         # model without a realtime layout still has a floor plan to draw on.
@@ -356,22 +358,47 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
             else:
                 path_mode = "last_run"
 
-        room_names = dict(getattr(self.coordinator, "room_names", None) or {})
+        props = getattr(self.coordinator, "properties", None) or {}
+        if props:
+            room_key = tuple(
+                (code, props.get(code)) for code in (*ROOM_INFO_CODES, CLEAN_SETTINGS_CODE)
+            )
+        else:
+            fallback_names = dict(getattr(self.coordinator, "room_names", None) or {})
+            room_key = tuple(sorted(fallback_names.items()))
         render_key = (
             hashlib.sha256(layout).hexdigest(),
             hashlib.sha256(path).hexdigest() if path else None,
             path_mode,
-            tuple(sorted(room_names.items())),
+            room_key,
         )
         if render_key != self._render_key or self._cache_png is None:
+            resolved_names: dict[int, str] = {}
+            if props:
+                def _resolve(ids: list[int]) -> dict[int, str]:
+                    resolved_names.clear()
+                    resolved_names.update(parse_room_names(props, map_room_ids=ids))
+                    return resolved_names
+
+                names_arg = _resolve
+            else:
+                resolved_names.update(fallback_names)
+                names_arg = fallback_names
             self._cache_png, self._render_metadata = await self.hass.async_add_executor_job(
                 partial(
                     render_tuya_map_png, layout, path,
                     include_path=path_mode != "hidden",
-                    room_names=room_names,
+                    room_names=names_arg,
                 )
             )
             self._render_key = render_key
+            rendered_rooms = {
+                int(k): str(v) for k, v in (self._render_metadata.get("rooms") or {}).items()
+            }
+            self._base_map_rooms = {
+                k: (f"Room {k + 1}" if k in resolved_names else v)
+                for k, v in rendered_rooms.items()
+            }
         self._cache_metadata = {
             **self._render_metadata,
             "map_source": source,
@@ -382,11 +409,13 @@ class TuyaMapCamera(CoordinatorEntity, Camera):
             "map_payload_sha256": render_key[0],
         }
         # The map is where a robot whose rooms were never renamed in the app keeps its
-        # rooms (#41): hand them to the vacuum, for room cleaning and the card's chips.
-        rooms = {int(k): str(v) for k, v in (self._render_metadata.get("rooms") or {}).items()}
-        if rooms and rooms != getattr(self.coordinator, "map_rooms", None):
-            self.coordinator.map_rooms = rooms
-            self.coordinator.async_update_listeners()
+        # rooms (#41), and its segment ids help pick the active MapRoomInfo slot (#44).
+        if self._base_map_rooms:
+            if hasattr(self.coordinator, "set_map_rooms"):
+                self.coordinator.set_map_rooms(self._base_map_rooms)
+            elif self._base_map_rooms != getattr(self.coordinator, "map_rooms", None):
+                self.coordinator.map_rooms = dict(self._base_map_rooms)
+                self.coordinator.async_update_listeners()
         if self._failures:
             _LOGGER.info("ILIFE Clean map recovered for %s", self.api.device_id)
         self._failures = 0

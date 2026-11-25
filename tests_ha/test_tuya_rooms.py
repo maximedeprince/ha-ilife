@@ -191,3 +191,62 @@ async def test_no_room_buttons_without_room_cleaning(hass: HomeAssistant) -> Non
         await hass.async_block_till_done()
     assert "rooms" not in hass.states.get("vacuum.robot").attributes
     assert hass.states.get("camera.robot_map").attributes["rooms"]  # the map still has them
+
+
+async def test_multi_map_room_names_match_the_active_map_segments(hass: HomeAssistant) -> None:
+    """#44: two saved maps in MapRoomInfo1 + MapRoomInfo2 must not concatenate into
+    "Kuchnia1794402708" or attach the old map's names to the new map's segments."""
+    from custom_components.ilife.diagnostics import async_get_config_entry_diagnostics
+
+    old_map = base64.b64encode(
+        "1790000000,OldMap,4,Salon,0,Korytarz,1,Sypialnia,2,Biuro,3,Kuchnia".encode()
+    ).decode()
+    new_map = base64.b64encode(
+        "1794402708,NewMap,0,Korytarz,1,Sypialnia,3,Biuro,4,Salon,5,Kuchnia".encode()
+    ).decode()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"backend": "ilife_clean", "access_id": "id", "access_secret": "secret",
+              "uid": "uid", "region": "eu"},
+        unique_id="ilife_clean_uid",
+    )
+    entry.add_to_hass(hass)
+
+    class MultiMap(FakeClient):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__()
+            self.properties["MapRoomInfo1"] = old_map
+            self.properties["MapRoomInfo2"] = new_map
+
+        def stored_map_files(self, device_id, record):
+            return [{"map_type": 0, "payload": _a30_map(room_ids=(0, 1, 3, 4, 5), width=10)}]
+
+    with (
+        patch("custom_components.ilife.TuyaClient", MultiMap),
+        patch("custom_components.ilife._async_register_frontend"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        expected = {0: "Korytarz", 1: "Sypialnia", 3: "Biuro", 4: "Salon", 5: "Kuchnia"}
+        assert hass.states.get("camera.robot_map").attributes["rooms"] == expected
+        assert hass.states.get("vacuum.robot").attributes["rooms"] == expected
+
+        await hass.services.async_call(
+            DOMAIN, "clean_rooms", {"entity_id": "vacuum.robot", "rooms": ["Kuchnia"]},
+            blocking=True)
+        assert _mask(MultiMap.instance.issued[-1]["CleanPartitionData"]) == 1 << 5
+        await hass.services.async_call(
+            DOMAIN, "clean_rooms", {"entity_id": "vacuum.robot", "rooms": ["Biuro"]},
+            blocking=True)
+        assert _mask(MultiMap.instance.issued[-1]["CleanPartitionData"]) == 1 << 3
+
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+        text = str(diag)
+        assert "Kuchnia" not in text and "NewMap" not in text
+        assert diag["devices"][0]["room_maps"] == {
+            "clean_settings_map_id": None,
+            "slots": [
+                {"map_id": 1790000000, "room_ids": [0, 1, 2, 3, 4]},
+                {"map_id": 1794402708, "room_ids": [0, 1, 3, 4, 5]},
+            ],
+        }

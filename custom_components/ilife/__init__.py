@@ -246,6 +246,20 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
             return dict(self.room_names)
         return {**self.map_rooms, **self.room_names}
 
+    def resolve_room_names(self, map_room_ids=None) -> dict[int, str]:
+        """{room id: name} for the active map, using the decoded map's room ids if known."""
+        ids = self.map_rooms if map_room_ids is None else map_room_ids
+        return parse_room_names(self.properties, map_room_ids=ids or None)
+
+    def set_map_rooms(self, rooms: dict[int, str]) -> None:
+        """Store the decoded map's fallback rooms and re-pick the matching MapRoomInfo
+        slot so vacuum.rooms stays aligned with the camera (#41, #44)."""
+        new_names = self.resolve_room_names(rooms) if self.properties else self.room_names
+        if rooms != self.map_rooms or new_names != self.room_names:
+            self.map_rooms = dict(rooms)
+            self.room_names = new_names
+            self.async_update_listeners()
+
     @property
     def schedules(self) -> dict[int, dict]:
         return parse_schedules(self.properties)
@@ -369,7 +383,7 @@ class ILifeTuyaCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("ILIFE Clean product properties unavailable", exc_info=True)
             return
         try:
-            self.room_names = parse_room_names(self.properties)
+            self.room_names = self.resolve_room_names()
         except Exception:  # noqa: BLE001 — names are cosmetic, keep the old ones
             _LOGGER.debug("ILIFE Clean room names unreadable", exc_info=True)
 

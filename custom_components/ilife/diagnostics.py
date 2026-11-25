@@ -35,6 +35,7 @@ from homeassistant.helpers.device_registry import DeviceEntry
 from .const import CONF_ACCESS_ID, CONF_ACCESS_SECRET, CONF_UID, DOMAIN
 from .tuya_api import TuyaError
 from .tuya_map import decode_tuya_map
+from .tuya_rooms import CLEAN_SETTINGS_CODE, active_map_id, parse_room_maps
 
 # Keys whose values are removed from the dump wherever they appear (recursively).
 # Credentials plus the identifiers that tie the account/device to a real person.
@@ -164,6 +165,18 @@ def _device_diag(coordinator: Any) -> dict[str, Any]:
             }
             for code, value in properties.items()
         }
+        # Map ids and room id lists only (never room or map names), to tell multi-map
+        # slot mismatches apart without exposing the home (#44).
+        room_maps = parse_room_maps(properties)
+        settings_map = active_map_id(properties.get(CLEAN_SETTINGS_CODE))
+        if room_maps or settings_map is not None:
+            diag["room_maps"] = {
+                "clean_settings_map_id": settings_map,
+                "slots": [
+                    {"map_id": m["map_id"], "room_ids": sorted(m["rooms"])}
+                    for m in room_maps
+                ],
+            }
     return diag
 
 
