@@ -210,6 +210,7 @@ class X801Protocol(MapProtocol):
         self._was_active = False
         self._was_docked = False
         self._posts = 0
+        self._dirty = False
         self._version = 0
         self.robot: tuple[int, int] | None = None
         self.charger: tuple[int, int] | None = None
@@ -220,11 +221,13 @@ class X801Protocol(MapProtocol):
         self._posts = 0
         self._ts = since_ms - 1
         self._pending = True
+        self._dirty = True
 
     async def async_update(self, hass, state: dict) -> None:
         import time as _time
 
         from .map import unpack_point
+        from .map_w450 import current_clean
 
         rtm = state.get("RealTimeMap")
         rtm = rtm if isinstance(rtm, dict) else {}
@@ -233,12 +236,12 @@ class X801Protocol(MapProtocol):
         active = cleaning or mode in RETURNING_MODES
         now_ms = int(_time.time() * 1000)
 
-        session = state.get("RealTimeMapStart")
+        map_start = int((getattr(self.api, "prop_times", {}) or {}).get("RealTimeMapStart") or 0)
+        session = (state.get("RealTimeMapStart"), map_start)
         if session != self._session:
             # new clean, or first poll: the whole map, from where this clean began
             self._session = session
-            start = int((getattr(self.api, "prop_times", {}) or {}).get("RealTimeMapStart") or 0)
-            self._restart(start or now_ms - 86_400_000)
+            self._restart(map_start or now_ms - 86_400_000)
         elif cleaning and self._was_docked:
             # a clean whose RealTimeMapStart was not (yet) re-reported
             self._restart(now_ms - 60_000)
@@ -247,11 +250,19 @@ class X801Protocol(MapProtocol):
         elif cleaning:
             self._was_docked = False
 
-        before = (len(self._cells), self._posts)
         if active or self._was_active or self._pending:
             try:
-                items = await hass.async_add_executor_job(
-                    self.api.property_timeline, "RealTimeMap", self._ts + 1, now_ms + 60_000)
+                if not self._cells and self._ts < now_ms:
+                    # full load: newest first, stopping at the latest clean's start in case
+                    # RealTimeMapStart was not re-reported for an earlier clean
+                    items = await hass.async_add_executor_job(
+                        functools.partial(
+                            self.api.property_timeline, "RealTimeMap", self._ts + 1,
+                            now_ms + 60_000, ordered=False, stop=_reached_clean_start))
+                    items = await hass.async_add_executor_job(current_clean, items)
+                else:
+                    items = await hass.async_add_executor_job(
+                        self.api.property_timeline, "RealTimeMap", self._ts + 1, now_ms + 60_000)
             except ILifeError:
                 _LOGGER.debug("ILIFE X801 map timeline unavailable", exc_info=True)
             else:
@@ -263,17 +274,24 @@ class X801Protocol(MapProtocol):
             # the polled post too, should the timeline lag or fail — unless it is
             # older than what the timeline gave, which would read as a new clean
             ct = rtm.get("CleanTime")
-            if self._clean_time is None or not isinstance(ct, int) or ct >= self._clean_time:
+            if (self._clean_time is None
+                    or not (isinstance(ct, int) and not isinstance(ct, bool))
+                    or ct >= self._clean_time):
                 self._add(rtm)
-        if (len(self._cells), self._posts) != before or (not self._cells and self._view):
+        if self._dirty or (not self._cells and self._view):
             self._view = dict(self._cells)
+            self._dirty = False
             self._version += 1
 
         self.robot = unpack_point(rtm.get("CurrentPiont"))
         charger = state.get("ChargerPoint")
-        charger = charger if isinstance(charger, dict) else {}
-        self.charger = (None if charger.get("DisplaySwitch") == 0
-                        else unpack_point(charger.get("Piont")))
+        if isinstance(charger, dict):
+            self.charger = (None if charger.get("DisplaySwitch") == 0
+                            else unpack_point(charger.get("Piont")))
+        else:
+            cp = state.get("ChargerPiont")
+            self.charger = (None if isinstance(cp, dict) and cp.get("DisplaySwitch") == 0
+                            else unpack_point(cp.get("Piont") if isinstance(cp, dict) else cp))
 
     def _add(self, post: dict) -> None:
         from .map import decode_cells
@@ -284,9 +302,12 @@ class X801Protocol(MapProtocol):
         if isinstance(ct, int) and not isinstance(ct, bool):
             if self._clean_time is not None and ct < self._clean_time:
                 self._cells = {}
+                self._dirty = True
             self._clean_time = ct
         for x, y, t in decode_cells(post.get("MapData")):
-            self._cells[(x, y)] = t
+            if self._cells.get((x, y)) != t:
+                self._cells[(x, y)] = t
+                self._dirty = True
 
     def _apply(self, items: list) -> None:
         """Add timeline posts, oldest first (executor)."""
@@ -312,6 +333,17 @@ class X801Protocol(MapProtocol):
         # the robot is about three cells wide: its track is widened by one on each side
         return render_cells_png(cells, self.robot, self.charger, wall=self.C_OBSTACLE,
                                 other=self.C_OTHER, floor_pad=1)
+
+    def camera_attributes(self) -> dict | None:
+        # The camera keeps the whole last clean (rebuilt from the timeline), which
+        # beats the history thumbnail on this model: calibration_points tell the card
+        # to keep showing it when the robot is docked, and suit xiaomi-vacuum-map-card.
+        from .map import cells_calibration
+
+        if not self._view:
+            return None
+        cal = cells_calibration(list(self._view), self.robot, self.charger)
+        return {"calibration_points": cal} if cal else None
 
     def diagnostics(self) -> dict:
         types: dict[int, int] = {}

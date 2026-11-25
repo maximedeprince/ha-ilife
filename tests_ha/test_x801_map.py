@@ -60,7 +60,8 @@ class FakeAccount:
         if path == "/thing/property/timeline/get":
             self.timeline_calls.append(d)
             sel = sorted(((ts, v) for ts, v in self.timeline.get(d["identifier"], [])
-                          if d["start"] <= ts <= d["end"]), key=lambda e: e[0])
+                          if d["start"] <= ts <= d["end"]),
+                         key=lambda e: e[0], reverse=not d.get("ordered", True))
             items = [{"timestamp": ts, "data": json.dumps(v)}
                      for ts, v in sel[:d.get("pageSize", 200)]]
             return {"code": 200, "data": {"items": items}}
@@ -98,7 +99,10 @@ async def test_docked_robot_shows_the_whole_last_clean(hass: HomeAssistant) -> N
     assert diag["cells"] == 64 and diag["cell_types"] == {4: 24, 2: 38, 5: 2}
     assert diag["timeline_posts"] == 3
 
-    assert hass.states.get("camera.robot_map").state != "unavailable"
+    cam = hass.states.get("camera.robot_map")
+    assert cam.state != "unavailable"
+    # docked card keeps the camera (instead of a garbled history thumbnail): calibration_points
+    assert len(cam.attributes["calibration_points"]) == 3
     image = await async_get_image(hass, "camera.robot_map")
     from PIL import Image
     img = Image.open(io.BytesIO(image.content)).convert("RGBA")
@@ -157,6 +161,30 @@ async def test_a_new_clean_starts_a_new_map_and_follows_the_timeline(hass: HomeA
         assert len(acc.timeline_calls) == calls
         assert coord.protocol.diagnostics()["cells"] == 5
         assert hass.states.get("camera.robot_map").state != "unavailable"
+
+
+async def test_stale_map_start_keeps_only_the_latest_clean(hass: HomeAssistant) -> None:
+    """When RealTimeMapStart was not re-reported for a new clean, newest-first paging
+    stops once CleanTime goes back instead of walking days of old posts."""
+    def _two_cleans(self, *args, **kwargs):
+        self.state = {"WorkMode": 9, "BatteryState": 80, "RealTimeMapStart": START // 1000,
+                      "RealTimeMap": {"MapData": _cells((35, 30, 4)),
+                                      "CurrentPiont": (35 << 16) | 30, "CleanTime": 40},
+                      "ChargerPoint": {"Piont": (1 << 16) | 1, "DisplaySwitch": 1}}
+        yesterday = [(START + i, {"MapData": _cells((i % 20, i // 20, 4)), "CleanTime": i * 4})
+                     for i in range(400)]
+        today = [(START + 500_000 + i, {"MapData": _cells((30 + i, 30, 4)), "CleanTime": 20 + i * 4})
+                 for i in range(6)]
+        self.timeline = {"RealTimeMap": yesterday + today}
+        self.timeline_calls = []
+        FakeAccount.instance = self
+
+    with patch.object(FakeAccount, "__init__", _two_cleans):
+        coord = await _setup(hass)
+    acc = FakeAccount.instance
+    assert len(acc.timeline_calls) == 1  # stopped after the newest page, not 3 pages
+    assert coord.protocol.diagnostics()["cells"] == 6
+    assert coord.protocol.diagnostics()["timeline_posts"] == 6
 
 
 def _reported_at(start):

@@ -207,14 +207,13 @@ def render_png(state):
     return render_cells_png(cells, robot, charger)
 
 
-def render_cells_png(cells, robot=None, charger=None, *, wall=C_WALL, other=None, floor_pad=0):
-    """Draw (x, y, type) cells (1 = wall, 2 = cleaned floor), the robot and the dock.
+MAX_SIDE = 2400  # px: a map wider than this at 1 px a cell is a stray point, not a home
+_MAX_SUPERSAMPLED = 3000  # px: side of the supersampled canvas render_cells_png draws on
 
-    `other`: colour for any other non-zero type (not drawn when None). `floor_pad`:
-    extra cells drawn around each floor cell, for models that report the robot's
-    track (one cell wide) rather than the area it covered."""
-    from PIL import Image, ImageDraw
 
+def cells_geometry(cells, robot=None, charger=None):
+    """(minx, maxy, cols, rows, cell px) for render_cells_png, or None when there is
+    nothing sensible to draw."""
     if not cells:
         return None
     xs = [c[0] for c in cells]
@@ -225,14 +224,52 @@ def render_cells_png(cells, robot=None, charger=None, *, wall=C_WALL, other=None
             ys.append(pt[1])
     minx, maxx = min(xs), max(xs)
     miny, maxy = min(ys), max(ys)
-
     margin = 2
     cols = (maxx - minx + 1) + 2 * margin
     rows = (maxy - miny + 1) + 2 * margin
+    span = max(cols, rows)
+    cell = max(12, min(46, 720 // span))
+    if span * cell > MAX_SIDE:
+        cell = MAX_SIDE // span
+        if cell < 1:
+            return None
+    return minx, maxy, cols, rows, cell
+
+
+def cells_calibration(cells, robot=None, charger=None):
+    """xiaomi-vacuum-map-card style calibration_points: map cell -> image pixel."""
+    geom = cells_geometry(cells, robot, charger)
+    if geom is None:
+        return None
+    minx, maxy, _cols, _rows, cell = geom
+    margin = 2
+
+    def px(x, y):
+        return {
+            "x": round((x - minx + margin + 0.5) * cell),
+            "y": round((maxy - y + margin + 0.5) * cell),
+        }
+
+    return [{"vacuum": {"x": x, "y": y}, "map": px(x, y)}
+            for x, y in ((minx, maxy), (minx + 10, maxy), (minx, maxy - 10))]
+
+
+def render_cells_png(cells, robot=None, charger=None, *, wall=C_WALL, other=None, floor_pad=0):
+    """Draw (x, y, type) cells (1 = wall, 2 = cleaned floor), the robot and the dock.
+
+    `other`: colour for any other non-zero type (not drawn when None). `floor_pad`:
+    extra cells drawn around each floor cell, for models that report the robot's
+    track (one cell wide) rather than the area it covered."""
+    from PIL import Image, ImageDraw
+
+    geom = cells_geometry(cells, robot, charger)
+    if geom is None:
+        return None
+    minx, maxy, cols, rows, cell = geom
+    margin = 2
     # cellule d'affichage large (carte nette une fois mise à l'échelle),
-    # dessin en supersampling x3 puis réduction lissée
-    cell = max(12, min(46, 720 // max(cols, rows)))
-    ss = 3
+    # dessin en supersampling borné puis réduction lissée
+    ss = max(1, min(3, _MAX_SUPERSAMPLED // (max(cols, rows) * cell)))
     cs = cell * ss
     img = Image.new("RGBA", (cols * cs, rows * cs), C_BG)
     draw = ImageDraw.Draw(img)
@@ -277,7 +314,8 @@ def render_cells_png(cells, robot=None, charger=None, *, wall=C_WALL, other=None
         rr2 = cs * 0.58
         draw.ellipse([cx - rr2, cy - rr2, cx + rr2, cy + rr2], fill=C_ROBOT)
 
-    img = img.resize((cols * cell, rows * cell), Image.LANCZOS)
+    if ss > 1:
+        img = img.resize((cols * cell, rows * cell), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()

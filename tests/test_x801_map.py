@@ -79,3 +79,28 @@ def test_realtime_models_draw_as_before():
     assert png == ilife_map.render_cells_png(
         ilife_map.decode_cells(state["RealTimeMap"]["MapData"]), (5, 4), (2, 2))
     assert ilife_map.render_cells_png([]) is None
+
+
+def test_rendered_image_is_bounded_and_stray_points_are_refused():
+    from PIL import Image
+
+    # A large home (~300 cells wide): cells shrink to stay within MAX_SIDE
+    wide = [(0, 0, 2), (300, 0, 2), (150, 50, 1)]
+    png = ilife_map.render_cells_png(wide)
+    img = Image.open(io.BytesIO(png))
+    assert max(img.size) <= ilife_map.MAX_SIDE
+
+    # A stray record thousands of cells away cannot allocate a giant canvas
+    assert ilife_map.render_cells_png([(0, 0, 2), (5000, 0, 2)]) is None
+    assert ilife_map.cells_calibration([(0, 0), (5000, 0)]) is None
+
+
+def test_calibration_matches_rendered_cell_centres():
+    cells = _clean()
+    cal = ilife_map.cells_calibration(cells)
+    assert len(cal) == 3
+    img = _image(wall=OBSTACLE, other=OTHER, floor_pad=1)
+    cell = img.width // (12 + 4)
+    # (0, 8) is the top-left wall cell: vacuum (0, 8) -> map pixel at its centre
+    assert cal[0] == {"vacuum": {"x": 0, "y": 8}, "map": {"x": round(2.5 * cell), "y": round(2.5 * cell)}}
+    assert img.getpixel((cal[0]["map"]["x"], cal[0]["map"]["y"])) == OBSTACLE

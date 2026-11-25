@@ -415,6 +415,11 @@ apart from a check every 30 minutes. The camera keeps the last clean once the ro
 back, and the cleaning history shows each clean's map. Contributed and checked on a
 real W450 by [@p1ne](https://github.com/p1ne) ([#40](https://github.com/maximedeprince/ha-ilife/pull/40)).
 
+On the **X801 family** (A9s Pro, ZACO A9s Pro, X801), the map is likewise rebuilt from
+the `RealTimeMap` timeline, with its own cell types (cleaned track, outline and dock)
+kept once the robot is docked and after a restart. Contributed and checked on a real
+ZACO A9s Pro by [@wgorzawski](https://github.com/wgorzawski) ([#47](https://github.com/maximedeprince/ha-ilife/pull/47)).
+
 ## Rooms, programs and schedules (ILIFE Clean)
 
 Laser models that keep rooms store them in product data points outside the
