@@ -349,7 +349,8 @@ depend on the brand:
 |---|---|---|---|
 | `slam_x9` | 3 | ILIFE A10 / A10s / A10 White / L100, X900 / X910, ZACO A10, AVA PRO MAX | saved map with rooms, room / zone clean, go to point |
 | `w450` | 4 | W400 / W450 / W455, ZACO W450 | the whole current clean, path and dock, drawn as the app does; history thumbnails |
-| `realtime` | 1, 2 | V3x, V5x, A4s Pro, A8 / A80, A9 / A9s, B5 Max… | live cleaning map, as before |
+| `x801` | 2 | A9s Pro, ZACO A9s Pro, X801 | the whole current / last clean (cleaned area, obstacles, robot and dock), kept once docked |
+| `realtime` | 1 | V3x, V5x, A4s Pro, A8 / A80, A9 / A9s, B5 Max… | live cleaning map, as before |
 
 A model missing from the table is classified from the properties it reports.
 
@@ -413,6 +414,11 @@ starts, then only the new posts while the robot is out, and nothing while it is 
 apart from a check every 30 minutes. The camera keeps the last clean once the robot is
 back, and the cleaning history shows each clean's map. Contributed and checked on a
 real W450 by [@p1ne](https://github.com/p1ne) ([#40](https://github.com/maximedeprince/ha-ilife/pull/40)).
+
+On the **X801 family** (A9s Pro, ZACO A9s Pro, X801), the map is likewise rebuilt from
+the `RealTimeMap` timeline, with its own cell types (cleaned track, outline and dock)
+kept once the robot is docked and after a restart. Contributed and checked on a real
+ZACO A9s Pro by [@wgorzawski](https://github.com/wgorzawski) ([#47](https://github.com/maximedeprince/ha-ilife/pull/47)).
 
 ## Rooms, programs and schedules (ILIFE Clean)
 
