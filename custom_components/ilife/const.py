@@ -32,6 +32,12 @@ WATER_LEVELS = {"Gentle": 1, "Standard": 2, "Strong": 3}
 _SUCTION_REV = {v: k for k, v in SUCTION_LEVELS.items()}
 _WATER_REV = {v: k for k, v in WATER_LEVELS.items()}
 
+# Models without VacWateState (e.g. V80 Pro / X752, #45) expose suction via
+# FanPower (0-100%, three audible motor levels) or MaxMode (0/1), and water
+# flow via WaterTankContrl (1-3).
+FAN_POWER_LEVELS = {"Gentle": 30, "Standard": 60, "Max": 100}
+MAX_MODE_LEVELS = {"Standard": 0, "Max": 1}
+
 
 def suction_label(vws):
     """Suction label from VacWateState (high nibble)."""
@@ -41,6 +47,29 @@ def suction_label(vws):
 def water_label(vws):
     """Water label from VacWateState (low nibble)."""
     return _WATER_REV.get((vws or 0) & 0xF)
+
+
+def fan_power_label(power):
+    """Map FanPower (0-100) to Gentle / Standard / Max."""
+    if not isinstance(power, (int, float)) or isinstance(power, bool):
+        return None
+    if power <= 45:
+        return "Gentle"
+    if power <= 80:
+        return "Standard"
+    return "Max"
+
+
+def max_mode_label(value):
+    """Map MaxMode (0/1) to Standard / Max."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return "Max" if value else "Standard"
+
+
+def water_tank_label(value):
+    """Water label from WaterTankContrl (1-3)."""
+    return _WATER_REV.get(value)
 
 
 def pack_vws(vws, suction=None, water=None):

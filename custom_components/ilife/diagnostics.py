@@ -52,6 +52,7 @@ TO_REDACT = {
     "iotId",
     "deviceName",
     "identityId",
+    "identityAlias",
     "identity_id",
     "token",
     "iotToken",

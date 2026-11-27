@@ -176,6 +176,7 @@ def _headers(brand: Brand, accept, ctype, content_md5, sign_url, extra=None):
 
 
 def _do(host, path, headers, body):
+    clean_path = path.split("?", 1)[0]
     req = urllib.request.Request("https://" + host + path, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -188,18 +189,18 @@ def _do(host, path, headers, body):
         except Exception:
             return {"httperror": e.code, "xca": xca, "body": raw[:200].decode("utf-8", "replace")}
     except urllib.error.URLError as e:
-        raise ILifeError(f"network error: {e}") from e
+        raise ILifeError(f"network error on {host}{clean_path}: {e}") from e
     except (OSError, http.client.HTTPException) as e:
         # A timeout or a dropped connection while reading the reply (TimeoutError,
         # RemoteDisconnected, IncompleteRead...) is not a URLError. It used to escape as
         # a raw exception, so a blip during HA's startup login failed the entry for good
         # instead of the automatic retry an ILifeError (ConfigEntryNotReady) gets.
-        raise ILifeError(f"network error: {type(e).__name__}: {e}") from e
+        raise ILifeError(f"network error on {host}{clean_path}: {type(e).__name__}: {e}") from e
     try:
         return json.loads(raw)
     except Exception as e:
         snippet = raw[:120].decode("utf-8", "replace") if raw else "(empty)"
-        raise ILifeError(f"non-JSON response from {path}: {snippet!r}") from e
+        raise ILifeError(f"non-JSON response from {host}{clean_path}: {snippet!r}") from e
 
 
 def _post_form(brand: Brand, host, path, form, extra=None):
@@ -287,18 +288,38 @@ class ILifeAccount:
                 "config": {"version": 0, "lastModify": 0},
                 "device": {"model": "sdk_gphone_x86_64", "brand": "goldfish_x86_64", "platformVersion": "30"}}
         vid = device_id = None
-        r = {}
-        for attempt in range(4):
-            r = _post_form(self.brand, OA_HOST, "/api/prd/connect.json", {"request": json.dumps(ctx)})
-            data = r.get("data", {})
-            vid = data.get("vid")
-            device_id = (((data.get("data") or {}).get("device") or {}).get("data") or {}).get("deviceId")
+        last_err: Exception | None = None
+        # Connect on the regional living-account host first (as the official app does):
+        # sdk.openaccount.aliyun.com routes through mainland China's WAF and times out
+        # on some AP/overseas ISP paths (#50). Keep OA_HOST as a fallback.
+        connect_hosts = [self.login_host]
+        if OA_HOST not in connect_hosts:
+            connect_hosts.append(OA_HOST)
+        for host in connect_hosts:
+            for attempt in range(2):
+                try:
+                    r = _post_form(self.brand, host, "/api/prd/connect.json",
+                                   {"request": json.dumps(ctx)})
+                except ILifeError as err:
+                    last_err = err
+                    _LOGGER.debug("ILIFE login [connect] failed on %s (attempt %d): %s",
+                                  host, attempt + 1, err)
+                    break  # network failure on this host: try the fallback host right away
+                data = r.get("data", {}) if isinstance(r, dict) else {}
+                vid = data.get("vid")
+                device_id = (((data.get("data") or {}).get("device") or {}).get("data") or {}).get("deviceId")
+                if vid and device_id:
+                    break
+                last_err = ILifeError(f"connect handshake returned no session on {host}")
+                _LOGGER.debug("ILIFE login [connect] attempt %d on %s returned no vid/deviceId",
+                              attempt + 1, host)
+                time.sleep(2)
             if vid and device_id:
                 break
-            _LOGGER.debug("ILIFE connect attempt %d failed", attempt + 1)
-            time.sleep(2)
         if not vid or not device_id:
-            raise ILifeError("connect handshake failed after 4 attempts")
+            if last_err is not None:
+                raise ILifeError(f"connect stage failed: {last_err}") from last_err
+            raise ILifeError(f"connect stage failed on {self.login_host}/api/prd/connect.json")
         login_req = {"password": _rsa_encrypt_pw(self._password), "loginId": self._email,
                      "riskControlInfo": {"appVersion": "123", "USE_OA_PWD_ENCRYPT": "true",
                         "utdid": "ffffffffffffffffffffffff", "netType": "wifi", "umidToken": "",
@@ -307,8 +328,12 @@ class ILifeAccount:
                         "appID": self.brand.oa_app_id, "signType": "RSA", "sdkVersion": self.brand.sdk_version,
                         "model": "sdk_gphone_x86_64", "USE_H5_NC": "true", "platformName": "android",
                         "brand": "google", "yunOSId": ""}}
-        r = _post_form(self.brand, self.login_host, "/api/prd/login.json",
-                       {"loginRequest": json.dumps(login_req)}, extra={"vid": vid})
+        try:
+            r = _post_form(self.brand, self.login_host, "/api/prd/login.json",
+                           {"loginRequest": json.dumps(login_req)}, extra={"vid": vid})
+        except ILifeError as err:
+            _LOGGER.debug("ILIFE login [login] failed on %s: %s", self.login_host, err)
+            raise ILifeError(f"login stage failed: {err}") from err
         ld = r.get("data", {})
         if ld.get("code") != 1:
             # Surface the server's own reason. A login that is valid in the app can
@@ -323,14 +348,22 @@ class ILifeAccount:
                 f"login refused (code {ld.get('code')}): "
                 f"{ld.get('message') or 'invalid credentials'}")
         sid = ld.get("data", {}).get("loginSuccessResult", {}).get("sid")
-        r = _post_iot(self.brand, self.api_host, "/account/createSessionByAuthCode",
-                      {"request": {"authCode": sid, "accountType": "OA_SESSION", "appKey": self.brand.appkey}},
-                      api_ver="1.0.4")
+        try:
+            r = _post_iot(self.brand, self.api_host, "/account/createSessionByAuthCode",
+                          {"request": {"authCode": sid, "accountType": "OA_SESSION", "appKey": self.brand.appkey}},
+                          api_ver="1.0.4")
+        except ILifeError as err:
+            _LOGGER.debug("ILIFE login [createSession] failed on %s: %s", self.api_host, err)
+            raise ILifeError(f"createSession stage failed: {err}") from err
         if r.get("code") != 200:
             _LOGGER.debug("ILIFE createSession failed: %s", r)
-            raise ILifeError(f"session creation failed (code {r.get('code')})")
+            raise ILifeError(f"createSession stage failed (code {r.get('code')})")
         self.token = r["data"]["iotToken"]
-        return self.list_devices()
+        try:
+            return self.list_devices()
+        except ILifeError as err:
+            _LOGGER.debug("ILIFE login [listBinding] failed on %s: %s", self.api_host, err)
+            raise
 
     def _iot(self, path, d, api_ver="1.0.2", _retry=True):
         r = _post_iot(self.brand, self.api_host, path, d, token=self.token, api_ver=api_ver)

@@ -21,6 +21,8 @@ from .const import (
     CLEANING_MODES,
     DOCKED_MODES,
     DOMAIN,
+    FAN_POWER_LEVELS,
+    MAX_MODE_LEVELS,
     PAUSED_MODES,
     RETURNING_MODES,
     SUCTION_LEVELS,
@@ -41,6 +43,8 @@ from .const import (
     TUYA_STATUS_IDLE,
     TUYA_STATUS_PAUSED,
     TUYA_STATUS_RETURNING,
+    fan_power_label,
+    max_mode_label,
     pack_vws,
     suction_label,
 )
@@ -141,11 +145,31 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         | VacuumEntityFeature.STATE
         | VacuumEntityFeature.LOCATE
     )
-    _attr_fan_speed_list = list(SUCTION_LEVELS)
 
     def __init__(self, coordinator):
         super().__init__(coordinator)
         self._attr_unique_id = f"{self.api.iot_id}_vacuum"
+
+    def _suction_mode(self) -> str:
+        """How this model controls suction: VacWateState (default), else FanPower or
+        MaxMode on models whose Thing Model has no VacWateState (e.g. V80 Pro, #45)."""
+        data = self.coordinator.data or {}
+        if "VacWateState" in data or not data:
+            return "vws"
+        if "FanPower" in data:
+            return "fan_power"
+        if "MaxMode" in data:
+            return "max_mode"
+        return "vws"
+
+    @property
+    def fan_speed_list(self):
+        mode = self._suction_mode()
+        if mode == "fan_power":
+            return list(FAN_POWER_LEVELS)
+        if mode == "max_mode":
+            return list(MAX_MODE_LEVELS)
+        return list(SUCTION_LEVELS)
 
     @property
     def supported_features(self):
@@ -173,7 +197,13 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
 
     @property
     def fan_speed(self):
-        return suction_label((self.coordinator.data or {}).get("VacWateState"))
+        data = self.coordinator.data or {}
+        mode = self._suction_mode()
+        if mode == "fan_power":
+            return fan_power_label(data.get("FanPower"))
+        if mode == "max_mode":
+            return max_mode_label(data.get("MaxMode"))
+        return suction_label(data.get("VacWateState"))
 
     async def _call(self, fn, *args):
         try:
@@ -205,8 +235,37 @@ class ILifeVacuum(ILifeEntity, StateVacuumEntity):
         await self._cmd(self.api.set_prop, "FindRobot", 1, 1)
 
     async def async_set_fan_speed(self, fan_speed, **kwargs):
-        if fan_speed not in SUCTION_LEVELS:
+        mode = self._suction_mode()
+        if mode == "fan_power":
+            if fan_speed not in FAN_POWER_LEVELS:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="fan_speed_unsupported",
+                    translation_placeholders={
+                        "fan_speed": str(fan_speed),
+                        "options": ", ".join(FAN_POWER_LEVELS),
+                    },
+                )
+            await self._cmd(self.api.set_prop, "FanPower", FAN_POWER_LEVELS[fan_speed], None, False)
             return
+        if mode == "max_mode":
+            if fan_speed not in MAX_MODE_LEVELS:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="fan_speed_unsupported",
+                    translation_placeholders={
+                        "fan_speed": str(fan_speed),
+                        "options": ", ".join(MAX_MODE_LEVELS),
+                    },
+                )
+            await self._cmd(self.api.set_prop, "MaxMode", MAX_MODE_LEVELS[fan_speed], None, False)
+            return
+        if fan_speed not in SUCTION_LEVELS:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="fan_speed_unsupported",
+                translation_placeholders={
+                    "fan_speed": str(fan_speed),
+                    "options": ", ".join(SUCTION_LEVELS),
+                },
+            )
         cur = (self.coordinator.data or {}).get("VacWateState")
         await self._cmd(self.api.set_prop, "VacWateState", pack_vws(cur, suction=fan_speed), None, False)
 

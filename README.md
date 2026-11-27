@@ -11,7 +11,7 @@ Custom Home Assistant integration for ILIFE robot vacuums.
 - **ILIFE Clean** app (Tuya cloud) — used by newer models. The T20s pairs
   via a `SmartLife-XXXX` Wi-Fi hotspot and the app itself documents linking
   through the Smart Life/Tuya ecosystem. Tested with the **ILIFE T20s**, the
-  **A30 Pro** and the **V20**, all three with the map of their last clean.
+  **A30 Pro**, the **A12 Pro** and the **V20**, all with the map of their last clean.
 
 <p align="center">
   <img src="docs/screenshot-1.png" width="300" alt="Card — status, map and controls">
@@ -303,7 +303,8 @@ unless the Cloud Project is authorized for it.
 
 1. A model that stores a map. Confirmed on the **ILIFE V20** (contributed and
    tested in [#28](https://github.com/maximedeprince/ha-ilife/issues/28)), the
-   **ILIFE A30 Pro** and the **ILIFE T20s**
+   **ILIFE A30 Pro**, the **ILIFE A12 Pro**
+   ([#51](https://github.com/maximedeprince/ha-ilife/issues/51)) and the **ILIFE T20s**
    ([#24](https://github.com/maximedeprince/ha-ilife/issues/24)).
 2. The **Sweeping Robot Open Service** authorized on your Tuya Cloud Project
    (**Cloud → your project → Service API → Go to Authorize**). Free, and not

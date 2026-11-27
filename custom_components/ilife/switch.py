@@ -10,6 +10,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
 
+from .api import ILifeError, ILifeOfflineError
 from .const import (
     BACKEND_ILIFE_CLEAN,
     DOMAIN,
@@ -65,7 +66,14 @@ class ILifeCarpetSwitch(ILifeEntity, SwitchEntity):
         return bool((self.coordinator.data or {}).get("CarpetControl"))
 
     async def _set(self, value):
-        await self.hass.async_add_executor_job(self.api.set_prop, "CarpetControl", value, None, False)
+        try:
+            await self.hass.async_add_executor_job(self.api.set_prop, "CarpetControl", value, None, False)
+        except ILifeOfflineError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="device_offline"
+            ) from err
+        except ILifeError as err:
+            raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_request_refresh()
 
     async def async_turn_on(self, **kwargs):

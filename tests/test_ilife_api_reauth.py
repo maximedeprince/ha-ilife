@@ -158,5 +158,73 @@ def test_network_failure_is_an_ilife_error(monkeypatch, phase, exc):
         return _FailingResponse(exc)
 
     monkeypatch.setattr(api.urllib.request, "urlopen", fake_urlopen)
-    with pytest.raises(api.ILifeError, match="network error"):
-        api._do("example.invalid", "/x", {}, b"{}")
+    with pytest.raises(api.ILifeError, match=r"network error on example\.invalid/x:"):
+        api._do("example.invalid", "/x?x-ca-request-id=secret", {}, b"{}")
+
+
+def test_login_connects_on_regional_host_without_touching_oa_host(monkeypatch):
+    """#50: connect.json goes to living-account.<region>.aliyuncs.com first so AP/overseas
+    users do not depend on mainland sdk.openaccount.aliyun.com."""
+    acc = api.ILifeAccount("e@x.tld", "pw", region="ap", brand="ilife")
+    hosts_seen: list[tuple[str, str]] = []
+
+    def fake_form(brand, host, path, form, extra=None):
+        hosts_seen.append((host, path))
+        if path == "/api/prd/connect.json":
+            return {"data": {"vid": "v1", "data": {"device": {"data": {"deviceId": "d1"}}}}}
+        if path == "/api/prd/login.json":
+            return {"data": {"code": 1, "data": {"loginSuccessResult": {"sid": "s1"}}}}
+        raise AssertionError(path)
+
+    def fake_iot(brand, host, path, d, token=None, api_ver="1.0.2"):
+        hosts_seen.append((host, path))
+        if path == "/account/createSessionByAuthCode":
+            return {"code": 200, "data": {"iotToken": "tok"}}
+        if path == "/uc/listBindingByAccount":
+            return {"code": 200, "data": {"data": [{"iotId": "id1", "status": 1}]}}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(api, "_post_form", fake_form)
+    monkeypatch.setattr(api, "_post_iot", fake_iot)
+    monkeypatch.setattr(api, "_rsa_encrypt_pw", lambda pw: "enc")
+
+    devs = acc.login()
+    assert len(devs) == 1
+    assert hosts_seen[0] == ("living-account.ap-southeast-1.aliyuncs.com", "/api/prd/connect.json")
+    assert all(h != api.OA_HOST for h, _ in hosts_seen)
+
+
+def test_login_falls_back_to_oa_host_when_regional_connect_fails(monkeypatch):
+    acc = api.ILifeAccount("e@x.tld", "pw", region="ap", brand="ilife")
+    connect_hosts: list[str] = []
+
+    def fake_form(brand, host, path, form, extra=None):
+        if path == "/api/prd/connect.json":
+            connect_hosts.append(host)
+            if host != api.OA_HOST:
+                raise api.ILifeError(f"network error on {host}{path}: timed out")
+            return {"data": {"vid": "v1", "data": {"device": {"data": {"deviceId": "d1"}}}}}
+        return {"data": {"code": 1, "data": {"loginSuccessResult": {"sid": "s1"}}}}
+
+    def fake_iot(brand, host, path, d, token=None, api_ver="1.0.2"):
+        if path == "/account/createSessionByAuthCode":
+            return {"code": 200, "data": {"iotToken": "tok"}}
+        return {"code": 200, "data": {"data": [{"iotId": "id1", "status": 1}]}}
+
+    monkeypatch.setattr(api, "_post_form", fake_form)
+    monkeypatch.setattr(api, "_post_iot", fake_iot)
+    monkeypatch.setattr(api, "_rsa_encrypt_pw", lambda pw: "enc")
+
+    assert len(acc.login()) == 1
+    assert connect_hosts == ["living-account.ap-southeast-1.aliyuncs.com", api.OA_HOST]
+
+
+def test_login_error_names_stage_and_endpoint_when_connect_times_out(monkeypatch):
+    acc = api.ILifeAccount("e@x.tld", "pw", region="ap", brand="ilife")
+
+    def fake_form(brand, host, path, form, extra=None):
+        raise api.ILifeError(f"network error on {host}{path}: timed out")
+
+    monkeypatch.setattr(api, "_post_form", fake_form)
+    with pytest.raises(api.ILifeError, match=r"connect stage failed:.*connect\.json"):
+        acc.login()
