@@ -90,7 +90,7 @@ class FakeAccount:
 
     def login(self):
         return [{"iotId": IOT_ID, "productKey": self.product_key, "nickName": "Robot",
-                 "productName": "ILIFE"}]
+                 "productName": "ILIFE", "identityAlias": "private@example.com"}]
 
     def device_status(self):
         return {IOT_ID: True}
@@ -207,8 +207,38 @@ async def test_diagnostics_describe_the_map_without_drawing_it(hass: HomeAssista
     assert _b64(_saved_map()) not in text
     assert "Kitchen" not in text and "Living room" not in text
     assert "NCADkZL4" not in text and "-1062731638" not in text
+    assert "private@example.com" not in text
     assert device["state"]["SaveMapDataX9_1"]["MapData1"].endswith("bytes>")
     assert device["state"]["SaveMapDataX9_1"]["MapData1_header"] == _saved_map()[:8].hex()
     assert device["map_protocol"]["key"] == "slam_x9"
     assert device["map_protocol"]["room_ids"] == [1, 2]
     assert device["map_protocol"]["named_rooms"] == 2
+
+
+async def test_v80_pro_uses_fan_power_and_water_tank_without_vac_wate_state(hass: HomeAssistant) -> None:
+    """#45: models whose Thing Model has no VacWateState (e.g. V80 Pro / X752) write
+    FanPower and WaterTankContrl instead of hitting Alibaba error 5092."""
+    v80_state = {
+        "WorkMode": 1,
+        "BatteryState": 100.0,
+        "FanPower": 100,
+        "MaxMode": 1,
+        "WaterTankContrl": 2,
+        "CarpetControl": 0,
+    }
+    account = await _setup(hass, "a2gylz5SVpC", v80_state)
+    vacuum = hass.states.get("vacuum.robot")
+    assert vacuum.attributes["fan_speed_list"] == ["Gentle", "Standard", "Max"]
+    assert vacuum.attributes["fan_speed"] == "Max"
+
+    await hass.services.async_call(
+        "vacuum", "set_fan_speed",
+        {"entity_id": "vacuum.robot", "fan_speed": "Standard"}, blocking=True)
+    assert account.writes[-1] == {"FanPower": 60}
+
+    water = hass.states.get("select.robot_water_level")
+    assert water.state == "Standard"
+    await hass.services.async_call(
+        "select", "select_option",
+        {"entity_id": "select.robot_water_level", "option": "Strong"}, blocking=True)
+    assert account.writes[-1] == {"WaterTankContrl": 3}

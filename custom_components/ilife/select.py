@@ -9,6 +9,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .api import ILifeError, ILifeOfflineError
 from .const import (
     BACKEND_ILIFE_CLEAN,
     CLEAN_MODES,
@@ -21,6 +22,7 @@ from .const import (
     clean_mode_label,
     pack_vws,
     water_label,
+    water_tank_label,
 )
 from .entity import ILifeEntity
 from .tuya_api import TuyaError, TuyaOfflineError
@@ -69,14 +71,34 @@ class ILifeWaterSelect(ILifeEntity, SelectEntity):
         super().__init__(coordinator)
         self._attr_unique_id = f"{self.api.iot_id}_water"
 
+    def _uses_water_tank_prop(self) -> bool:
+        data = self.coordinator.data or {}
+        return "VacWateState" not in data and "WaterTankContrl" in data
+
     @property
     def current_option(self):
-        return water_label((self.coordinator.data or {}).get("VacWateState"))
+        data = self.coordinator.data or {}
+        if self._uses_water_tank_prop():
+            return water_tank_label(data.get("WaterTankContrl"))
+        return water_label(data.get("VacWateState"))
 
     async def async_select_option(self, option):
-        cur = (self.coordinator.data or {}).get("VacWateState")
-        await self.hass.async_add_executor_job(
-            self.api.set_prop, "VacWateState", pack_vws(cur, water=option), None, False)
+        if option not in WATER_LEVELS:
+            return
+        try:
+            if self._uses_water_tank_prop():
+                await self.hass.async_add_executor_job(
+                    self.api.set_prop, "WaterTankContrl", WATER_LEVELS[option], None, False)
+            else:
+                cur = (self.coordinator.data or {}).get("VacWateState")
+                await self.hass.async_add_executor_job(
+                    self.api.set_prop, "VacWateState", pack_vws(cur, water=option), None, False)
+        except ILifeOfflineError as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key="device_offline"
+            ) from err
+        except ILifeError as err:
+            raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_request_refresh()
 
 
