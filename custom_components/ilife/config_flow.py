@@ -164,7 +164,8 @@ class ILifeConfigFlow(ConfigFlow, domain=DOMAIN):
             except ILifeAuthError as err:
                 _LOGGER.warning("ILIFE re-authentication failed: %s", err)
                 errors["base"] = "invalid_auth"
-            except ILifeError:
+            except ILifeError as err:
+                _LOGGER.warning("ILIFEHOME reauth cannot_connect: %s", err)
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_update_reload_and_abort(
